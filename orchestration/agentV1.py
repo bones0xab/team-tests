@@ -19,6 +19,8 @@ llm = ChatOllama(
     temperature=0.2
 )
 
+
+
 agent = create_agent(
     model = llm,
     system_prompt="Be concise. Answer in one sentence."
