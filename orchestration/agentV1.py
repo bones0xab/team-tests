@@ -29,5 +29,4 @@ data = Get_Jira_data()
 
 result = agent.invoke({"messages" : [{"role" : "user", "content" : "what weather casablanca has the most ?"}]})
 
-print(":TEST")
 print(result["messages"][-1].content)
