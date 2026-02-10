@@ -7,7 +7,6 @@ JIRA_BASE = "https://derraznour.atlassian.net"
 
 
 def search_issues(jql: str, fields: list[str], batch=50) -> Iterator[dict]:
-    print("Am here in search issues!")
     s = jira_session()
     start = 0
 
@@ -26,7 +25,6 @@ def search_issues(jql: str, fields: list[str], batch=50) -> Iterator[dict]:
         print(r.text[:500])
         return  # stop generator
     data = r.json()
-    print("Am i after ? ")
     issues = data["issues"]
 
     yield from issues
