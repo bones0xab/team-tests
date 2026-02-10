@@ -2,7 +2,8 @@ from typing import Iterator
 from services.Auth import jira_session
 
 print("BANANA")
-JIRA_BASE = "https://abdlkbirdacosta12.atlassian.net"
+JIRA_BASE = "https://derraznour.atlassian.net"
+
 
 
 def search_issues(jql: str, fields: list[str], batch=50) -> Iterator[dict]:
