@@ -7,16 +7,10 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
-            steps {
-                git url: 'https://github.com/bones0xab/team-tests.git', branch: 'devops-test'
-    
-            }
-        }
 
         stage('Install Dependencies') {
             steps {
-                bat '''
+                sh '''
                 python -m pip install --upgrade pip
                 pip install -r requirements.txt
                 pip install pytest flake8 black
@@ -26,19 +20,19 @@ pipeline {
 
         stage('Lint') {
             steps {
-                bat 'flake8 .'
+                sh 'flake8 .'
             }
         }
 
         stage('Tests') {
             steps {
-                bat 'pytest'
+                sh 'pytest'
             }
         }
 
         stage('Validate Code') {
             steps {
-                bat '''
+                sh '''
                 python -m py_compile main.py
                 python -m py_compile services/Auth.py
                 python -m py_compile services/Fetch.py
@@ -49,7 +43,8 @@ pipeline {
 
         stage('Run Dashboard') {
             steps {
-                bat 'streamlit run main.py'
+                sh 'streamlit run main.py --server.headless true &'
+
             }
         }
     }
