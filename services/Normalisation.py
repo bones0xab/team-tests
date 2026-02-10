@@ -15,7 +15,14 @@ def normalize_issue(raw: dict) -> dict:
         jira_status_category=jira_status_category,
     )
 
-    updated_at = datetime.fromisoformat(fields["updated"])
+    updated_str = fields["updated"]
+
+    # Fix timezone Jira (+0100 → +01:00)
+    if "+" in updated_str:
+        updated_str = updated_str[:-2] + ":" + updated_str[-2:]
+
+    updated_at = datetime.fromisoformat(updated_str)
+
 
     return {
         "id": raw["id"],
