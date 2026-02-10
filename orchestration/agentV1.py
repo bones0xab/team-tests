@@ -15,7 +15,7 @@ def Get_Jira_data():
 
 
 llm = ChatOllama(
-    model="qwen2.5:7b-instruct",
+    model="llama3",
     temperature=0.2
 )
 

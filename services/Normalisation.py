@@ -1,5 +1,4 @@
-from datetime import datetime
-
+from dateutil import parser
 def normalize_issue(issue: dict) -> dict:
     f = issue["fields"]
     print("Am here !")
@@ -9,5 +8,5 @@ def normalize_issue(issue: dict) -> dict:
         "summary": f["summary"],
         "status": f["status"]["statusCategory"]["key"],
         "assignee": f["assignee"]["displayName"] if f["assignee"] else None,
-        "updated_at": datetime.fromisoformat(f["updated"].replace("Z","")),
+        "updated_at": parser.parse(f["updated"].replace("Z","")),
     }
