@@ -9,7 +9,7 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/TON-REPO.git', branch: 'main'
+                git url: 'https://github.com/bones0xab/team-tests.git', branch: 'main'
             }
         }
 
