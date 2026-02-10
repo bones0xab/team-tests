@@ -22,16 +22,17 @@ if data:
     st.dataframe(df, use_container_width=True)
 
     # ===== FILTER =====
-    status_filter = st.selectbox("Filter by status", df["status"].unique())
-    filtered_df = df[df["status"] == status_filter]
+    status_filter = st.selectbox("Filter by status", df["status_name"].unique())
+    filtered_df = df[df["status_name"] == status_filter]
     st.dataframe(filtered_df, use_container_width=True)
 
     # ===== GRAPH STATUS =====
     fig1 = px.bar(
         df,
-        x="status",
+        x="status_name",
         title="Tickets by Status",
-        color="status"
+        color="status_name",
+        color_discrete_sequence=px.colors.qualitative.Set2
     )
     st.plotly_chart(fig1, use_container_width=True)
 
