@@ -5,9 +5,7 @@ from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 from dotenv import load_dotenv
 
-
 load_dotenv()
-
 
 def jira_session() -> Session:
     s = Session()
@@ -29,5 +27,3 @@ def jira_session() -> Session:
     )
     s.mount("https://", HTTPAdapter(max_retries=retries))
     return s
-
-

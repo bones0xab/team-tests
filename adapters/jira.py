@@ -21,7 +21,7 @@ DEFAULT_STATUS_MAP = {
 }
 
 
-def jira_canonical_status(status_name: Optional[str],jira_status_category: Optional[str]) -> str:
+def jira_canonical_status(status_name: Optional[str], jira_status_category: Optional[str]) -> str:
     # 1️⃣ Prefer Jira statusCategory (already semantic)
     if jira_status_category in ("To Do", "In Progress", "Done"):
         mapped = DEFAULT_STATUS_MAP.get(jira_status_category)

@@ -3,7 +3,6 @@ from services.Auth import jira_session
 
 JIRA_BASE = "https://abdlkbirdacosta12.atlassian.net"
 
-
 def search_issues(jql: str, fields: list[str], batch=50) -> Iterator[dict]:
     s = jira_session()
     start = 0
