@@ -129,7 +129,7 @@ pipeline {
                 sh """
                     docker run -d \\
                         --name smoke-${IMAGE_TAG} \\
-                        -p 850${BUILD_NUMBER}:8501 \\
+                        -p 8501 \\
                         ${IMAGE_NAME}:${IMAGE_TAG}
                     
                     sleep 15
