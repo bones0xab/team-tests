@@ -39,7 +39,6 @@ pipeline {
                     def result = sh(
                         script: """
                             docker run --rm \\
-                                -v \$(pwd)/tests:/app/tests \\
                                 ${IMAGE_NAME}:${IMAGE_TAG} \\
                                 pytest tests/ -v -m "not integration" \\
                                 --tb=short --maxfail=3
@@ -59,7 +58,6 @@ pipeline {
             steps {
                 echo '🤖 Running Ollama integration tests...'
                 script {
-                    // Check if Ollama is reachable on the host
                     def ollamaUp = sh(
                         script: 'curl -sf http://host.docker.internal:11434/api/tags > /dev/null 2>&1',
                         returnStatus: true
@@ -76,7 +74,6 @@ pipeline {
                             docker run --rm \\
                                 --add-host=host.docker.internal:host-gateway \\
                                 -e OLLAMA_HOST=http://host.docker.internal:11434 \\
-                                -v \$(pwd)/tests:/app/tests \\
                                 ${IMAGE_NAME}:${IMAGE_TAG} \\
                                 pytest tests/test_integration_ollama.py -v \\
                                 -m integration \\
