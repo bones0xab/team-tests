@@ -1,37 +1,53 @@
 from typing import Iterator
 from services.Auth import jira_session
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 print("BANANA")
-JIRA_BASE = "https://derraznour.atlassian.net"
 
-
+JIRA_BASE = os.getenv("JIRA_URL", "https://abdlkbirdacosta12.atlassian.net")
 
 def search_issues(jql: str, fields: list[str], batch=50) -> Iterator[dict]:
+    """Fetch issues from Jira using new JQL API endpoint"""
     s = jira_session()
     start = 0
     
-    while True:  # ← Boucle pour récupérer tous les résultats
+    while True:
+        print(f"🔍 Fetching from {JIRA_BASE} (start={start})...")
+        
+        # Use the NEW /search/jql endpoint (not /search)
         r = s.get(
-            f"{JIRA_BASE}/rest/api/3/search/jql",
+            f"{JIRA_BASE}/rest/api/3/search/jql",  # ✅ New endpoint
             params={
                 "jql": jql,
-                "fields": ",".join(fields),
+                "fields": ",".join(fields),  # Comma-separated string
                 "startAt": start,
                 "maxResults": batch,
             },
             timeout=15,
         )
         
+        print(f"📡 Status: {r.status_code}")
+        
         if r.status_code >= 400:
-            print("ERROR", r.status_code)
-            print(r.text[:500])
-            return  # stop generator
+            print(f"❌ ERROR {r.status_code}")
+            print(f"Response: {r.text[:500]}")
+            return
         
         data = r.json()
-        issues = data["issues"]
+        issues = data.get("issues", [])
+        total = data.get("total", 0)
         
-        if not issues:  # ← Arrêter si plus de résultats
+        print(f"✅ Got {len(issues)} issues (total available: {total})")
+        
+        if not issues:
             break
         
         yield from issues
         start += len(issues)
+        
+        # Stop if we've fetched everything
+        if start >= total:
+            break
