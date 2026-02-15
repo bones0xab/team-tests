@@ -1,49 +1,68 @@
 # services/Normalisation.py
+from typing import Dict, Any
 from adapters.jira import jira_canonical_status
 from datetime import datetime, timezone
 
-def normalize_issue(raw: dict) -> dict:
-    """Normalize a Jira issue into standard format"""
-    fields = raw["fields"]
-    status = fields["status"]
+#French status mapping for your friend's Jira
+STATUS_CATEGORY_MAP = {
+    "Revue en cours": "indeterminate",  # In review
+    "En cours": "indeterminate",         # In progress
+    "À faire": "new",                    # To do
+    "Terminé(e)": "done",                # Done
+}
 
-    status_name = status["name"]
-    jira_status_category = status["statusCategory"]["name"]
+# Standard Jira category mapping to our internal format
+CATEGORY_TO_INTERNAL = {
+    "new": "todo",
+    "indeterminate": "in_progress",  # ✅ THIS IS THE KEY FIX
+    "done": "done",
+}
 
-    canonical = jira_canonical_status(
-        status_name=status_name,
-        jira_status_category=jira_status_category,
-    )
-
-    updated_str = fields["updated"]
-
-    # Fix timezone formats
-    # 1. UTC format with 'Z' → '+00:00'
-    if updated_str.endswith("Z"):
-        updated_str = updated_str[:-1] + "+00:00"
+def normalize_issue(raw: dict) -> Dict[str, Any]:
+    """
+    Normalize a Jira issue from API format to our internal format.
+    Handles French statuses and custom workflows.
+    """
+    fields = raw.get("fields", {})
     
-    # 2. Jira format without colon (+0100 → +01:00 ou -0500 → -05:00)
-    elif ("+" in updated_str or "-" in updated_str[10:]):  # Ignorer le "-" dans la date
-        if updated_str[-3] != ":":  # Si pas déjà au bon format
-            updated_str = updated_str[:-2] + ":" + updated_str[-2:]
-
-    updated_at = datetime.fromisoformat(updated_str)
+    # Extract status information
+    status = fields.get("status", {})
+    status_name = status.get("name", "Unknown")
     
-    # Fix: days_since_update ne peut pas être négatif
-    days_since_update = (datetime.now(timezone.utc) - updated_at).days
-    days_since_update = max(0, days_since_update)
-
+    # Get Jira's category key (new, indeterminate, done)
+    jira_category = status.get("statusCategory", {}).get("key", "unknown")
+    
+    # Map to our internal format (todo, in_progress, done)
+    status_category = CATEGORY_TO_INTERNAL.get(jira_category, "unknown")
+    
+    # Extract assignee
+    assignee_obj = fields.get("assignee")
+    assignee = assignee_obj.get("displayName") if assignee_obj else None
+    
+    # Calculate days since last update
+    updated_str = fields.get("updated", "")
+    if updated_str:
+        # Handle timezone formats: both "2024-01-15T10:30:00.000+0100" and "+01:00"
+        if updated_str[-3] == ":":
+            updated_str = updated_str[:-3] + updated_str[-2:]
+        
+        try:
+            updated_dt = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = now - updated_dt
+            days_since_update = max(0, delta.days)
+        except (ValueError, AttributeError):
+            days_since_update = 0
+    else:
+        days_since_update = 0
+    
     return {
-        "id": raw["id"],
-        "key": raw["key"],
-        "summary": fields["summary"],
+        "id": raw.get("id"),
+        "key": raw.get("key"),
+        "summary": fields.get("summary", ""),
         "status_name": status_name,
-        "status_category": canonical,
-        "assignee": (
-            fields["assignee"]["displayName"]
-            if fields.get("assignee")
-            else None
-        ),
-        "updated_at": updated_at,
+        "status_category": status_category,  # Now correctly mapped!
+        "assignee": assignee,
+        "updated_at": updated_str,
         "days_since_update": days_since_update,
     }
