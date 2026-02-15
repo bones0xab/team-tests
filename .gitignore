@@ -139,6 +139,7 @@ celerybeat.pid
 .envrc
 .venv
 env/
+langchain_03_V/
 venv/
 ENV/
 env.bak/
