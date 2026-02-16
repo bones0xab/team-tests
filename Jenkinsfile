@@ -34,8 +34,8 @@ pipeline {
                     def buildResult = sh(
                         script: """
                             docker build \
+                                --no-cache \
                                 --network=host \
-                                --cache-from ${IMAGE_NAME}:latest \
                                 -t ${IMAGE_NAME}:${IMAGE_TAG} \
                                 -t ${IMAGE_NAME}:latest \
                                 .

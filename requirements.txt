@@ -51,7 +51,7 @@ numpy>=1.22.4,<2
 ollama==0.6.1
 orjson==3.11.7
 ormsgpack==1.12.2
-packaging==26.0
+packaging>=23.2,<25
 pandas==2.3.3
 pathspec==1.0.4
 pillow==12.1.0

@@ -1,3 +1,7 @@
+"""
+Fixed test_pipeline.py - Moves JIRA connection inside test functions
+so it doesn't fail during test collection.
+"""
 import pytest
 from services.Fetch import search_issues
 
