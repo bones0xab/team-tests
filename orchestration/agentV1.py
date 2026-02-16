@@ -5,8 +5,8 @@ from typing import Dict, Any, Optional
 from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate
 from langchain_ollama import ChatOllama
 from langchain_core.tools import tool
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-
+from langchain.agents import AgentExecutor
+from langchain.agents import create_tool_calling_agent
 from services.Fetch import search_issues
 from services.Normalisation import normalize_issue
 from orchestration.metrics import compute_signals
