@@ -43,21 +43,12 @@ pipeline {
                         returnStatus: true
                     )
                     if (buildResult != 0) {
-                        def imageExists = sh(
-                            script: "docker image inspect ${IMAGE_NAME}:latest > /dev/null 2>&1",
-                            returnStatus: true
-                        ) == 0
-                        if (imageExists) {
-                            echo 'Using existing image'
-                            sh "docker tag ${IMAGE_NAME}:latest ${IMAGE_NAME}:${IMAGE_TAG}"
-                        } else {
-                            error('No image available and build failed')
+                                            error('Docker build failed - network issue, no fallback allowed')
+                                        }
+                                        echo 'Docker image built successfully'
                         }
-                    }
-                    echo 'Docker image built successfully'
                 }
             }
-        }
 
         stage('Unit Tests') {
             steps {
