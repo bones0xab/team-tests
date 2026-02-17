@@ -51,6 +51,21 @@ def get_rules(metrics: Dict[str, Any], thresholds: Optional[Dict[str, Any]] = No
     print(f"[DEBUG] Project health: {result.get('project_health', 'UNKNOWN')}")
     return result
 
+ 
+llm = ChatOllama(model="qwen2.5:7b-instruct", temperature=0.2)
+
+tools = [get_project_metrics, get_rules]
+
+SYSTEM_PROMPT = """...(keep your exact same text)..."""
+
+prompt_template = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    MessagesPlaceholder(variable_name="agent_scratchpad"),
+    ("human", "{input}")
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt_template)
+executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=5)
 
 def run_ai_analysis():
     """
