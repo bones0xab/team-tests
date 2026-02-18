@@ -453,7 +453,12 @@ if data:
     with col4:
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name='Issues', index=False)
+            df_excel = df.copy()
+            if 'updated_at' in df_excel.columns:
+                df_excel['updated_at'] = df_excel['updated_at'].apply(
+                    lambda x: x.replace(tzinfo=None) if hasattr(x, 'tzinfo') and x.tzinfo else x
+                )
+            df_excel.to_excel(writer, sheet_name='Issues', index=False)
             pd.DataFrame([metrics]).to_excel(writer, sheet_name='Metrics', index=False)
         excel_buffer.seek(0)
         
