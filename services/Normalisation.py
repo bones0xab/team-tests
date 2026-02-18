@@ -2,7 +2,7 @@
 from typing import Dict, Any
 from adapters.jira import jira_canonical_status
 from datetime import datetime, timezone
-
+from dateutil import parser
 #French status mapping for your friend's Jira
 STATUS_CATEGORY_MAP = {
     "Revue en cours": "indeterminate",  # In review
@@ -14,7 +14,7 @@ STATUS_CATEGORY_MAP = {
 # Standard Jira category mapping to our internal format
 CATEGORY_TO_INTERNAL = {
     "new": "todo",
-    "indeterminate": "in_progress",  # ✅ THIS IS THE KEY FIX
+    "indeterminate": "in_progress",  #  THIS IS THE KEY FIX
     "done": "done",
 }
 
@@ -41,6 +41,9 @@ def normalize_issue(raw: dict) -> Dict[str, Any]:
     
     # Calculate days since last update
     updated_str = fields.get("updated", "")
+    updated_dt = None
+    days_since_update = 0
+    
     if updated_str:
         # Handle timezone formats: both "2024-01-15T10:30:00.000+0100" and "+01:00"
         if updated_str[-3] == ":":
@@ -63,6 +66,6 @@ def normalize_issue(raw: dict) -> Dict[str, Any]:
         "status_name": status_name,
         "status_category": status_category,  # Now correctly mapped!
         "assignee": assignee,
-        "updated_at": updated_str,
+        "updated_at": updated_dt,
         "days_since_update": days_since_update,
     }
