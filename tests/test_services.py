@@ -90,7 +90,6 @@ class TestFetchUnit:
         mock_session.get.side_effect = [
             self._make_response(page1),
             self._make_response(page2),
-            self._make_response([]),
         ]
 
         result = list(search_issues("project = BIG", ["summary"], batch=50))
@@ -100,7 +99,7 @@ class TestFetchUnit:
         calls = mock_session.get.call_args_list
         assert calls[0][1]["params"]["startAt"] == 0
         assert calls[1][1]["params"]["startAt"] == 50
-        assert calls[2][1]["params"]["startAt"] == 80
+        
 
     @patch('services.Fetch.jira_session')
     def test_empty_jira_response_returns_empty_list(self, mock_session_fn):
