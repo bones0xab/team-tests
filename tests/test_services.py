@@ -2,16 +2,22 @@ import inspect
 import os
 import pytest
 from unittest.mock import MagicMock, patch
+from services.Auth import jira_session
+from requests.adapters import HTTPAdapter
+from requests.auth import HTTPBasicAuth
+from dotenv import load_dotenv
+from services.Fetch import search_issues
+from services import Fetch
+from services.Normalisation import normalize_issue
 
 # Real project constants — must match Fetch.py and .env exactly
-JIRA_BASE_URL = "https://derraznour.atlassian.net"
+JIRA_BASE_URL = os.getenv("JIRA_URL", "https://abdlkbirdacosta12.atlassian.net")
 JIRA_EMAIL    = "derraznour@gmail.com"
 
 
 # ─── Helper: detect real Jira credentials from .env ───────────────────────────
 
-def _jira_creds_available() -> bool:
-    from dotenv import load_dotenv
+def _jira_creds_available() -> bool: 
     load_dotenv()
     return bool(os.getenv("JIRA_EMAIL") and os.getenv("JIRA_API_TOKEN"))
 
@@ -27,29 +33,24 @@ SKIP_JIRA = pytest.mark.skipif(
 class TestFetchStructure:
 
     def test_search_issues_is_importable(self):
-        from services.Fetch import search_issues
         assert callable(search_issues)
 
     def test_search_issues_is_generator_function(self):
-        from services.Fetch import search_issues
         assert inspect.isgeneratorfunction(search_issues), \
             "search_issues must use 'yield' — it must be a generator function"
 
     def test_search_issues_signature(self):
-        from services.Fetch import search_issues
         sig = inspect.signature(search_issues)
         params = list(sig.parameters.keys())
         assert "jql" in params, "Must accept 'jql' parameter"
         assert "fields" in params, "Must accept 'fields' parameter"
 
     def test_jira_base_url_is_correct(self):
-        from services import Fetch
         assert hasattr(Fetch, "JIRA_BASE"), "JIRA_BASE must be defined in Fetch.py"
         assert Fetch.JIRA_BASE == JIRA_BASE_URL, \
             f"JIRA_BASE must be '{JIRA_BASE_URL}', got '{Fetch.JIRA_BASE}'"
 
     def test_auth_session_is_importable(self):
-        from services.Auth import jira_session
         assert callable(jira_session)
 
 class TestFetchUnit:
@@ -63,7 +64,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_returns_issues_single_page(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.side_effect = [
@@ -82,7 +82,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_paginates_across_multiple_pages(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
 
@@ -105,7 +104,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_empty_jira_response_returns_empty_list(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.return_value = self._make_response([])
@@ -115,7 +113,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_stops_immediately_on_http_401(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.return_value = self._make_response([], status=401)
@@ -127,7 +124,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_stops_immediately_on_http_400(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.return_value = self._make_response([], status=400)
@@ -138,7 +134,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_calls_correct_jira_api_url(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.return_value = self._make_response([])
@@ -151,7 +146,6 @@ class TestFetchUnit:
 
     @patch('services.Fetch.jira_session')
     def test_fields_list_joined_as_comma_string(self, mock_session_fn):
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.return_value = self._make_response([])
@@ -164,7 +158,6 @@ class TestFetchUnit:
     @patch('services.Fetch.jira_session')
     def test_timeout_is_set_on_every_request(self, mock_session_fn):
         """CRITICAL: Every request must have a timeout — prevents hanging forever."""
-        from services.Fetch import search_issues
         mock_session = MagicMock()
         mock_session_fn.return_value = mock_session
         mock_session.get.return_value = self._make_response([])
@@ -190,8 +183,7 @@ class TestAuthUnit:
     @patch.dict(os.environ, {"JIRA_EMAIL": JIRA_EMAIL, "JIRA_API_TOKEN": "test-token"})
     def test_session_uses_basic_auth(self):
         """Session must authenticate with the correct Jira email."""
-        from services.Auth import jira_session
-        from requests.auth import HTTPBasicAuth
+
 
         s = jira_session()
 
@@ -204,7 +196,6 @@ class TestAuthUnit:
     @patch.dict(os.environ, {"JIRA_EMAIL": JIRA_EMAIL, "JIRA_API_TOKEN": "test-token"})
     def test_session_sends_json_headers(self):
         """Session must send JSON headers — required by Jira REST API v3."""
-        from services.Auth import jira_session
 
         s = jira_session()
 
@@ -222,8 +213,7 @@ class TestAuthUnit:
         but Auth.py mounts an HTTPAdapter — so we assert isinstance first,
         then access max_retries on the correctly-typed variable.
         """
-        from services.Auth import jira_session
-        from requests.adapters import HTTPAdapter
+
 
         s = jira_session()
         adapter = s.get_adapter(JIRA_BASE_URL)
@@ -244,7 +234,6 @@ class TestAuthUnit:
     @patch.dict(os.environ, {"JIRA_EMAIL": JIRA_EMAIL, "JIRA_API_TOKEN": "test-token"})
     def test_session_user_agent_is_set(self):
         """Session must identify itself with a User-Agent."""
-        from services.Auth import jira_session
 
         s = jira_session()
 
@@ -268,7 +257,6 @@ class TestFetchIntegration:
         Credentials from .env must authenticate successfully.
         Calls GET /rest/api/3/myself — the standard Jira auth check endpoint.
         """
-        from services.Auth import jira_session
 
         s = jira_session()
         r = s.get(f"{JIRA_BASE_URL}/rest/api/3/myself", timeout=10)
@@ -295,7 +283,6 @@ class TestFetchIntegration:
         Real JQL search against derraznour.atlassian.net.
         Fetches up to 3 issues from the last 30 days.
         """
-        from services.Fetch import search_issues
 
         issues = list(search_issues(
             "created >= -30 ORDER BY created DESC",
@@ -323,8 +310,7 @@ class TestFetchIntegration:
         Full pipeline: Fetch.py → Normalisation.py → valid normalized dict.
         Tests the exact data flow used by the AI agent.
         """
-        from services.Fetch import search_issues
-        from services.Normalisation import normalize_issue
+        
 
         raw_issues = list(search_issues(
             "created >= -30 ORDER BY created DESC",
