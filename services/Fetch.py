@@ -48,3 +48,7 @@ def search_issues(jql: str, fields: list[str], batch=50) -> Iterator[dict]:
         yield from issues
         start += len(issues)
         
+        # Stop if we got less than a full batch (last page)
+        if len(issues) < batch:
+
+            break
