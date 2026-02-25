@@ -4,6 +4,10 @@ pipeline {
     environment {
         IMAGE_NAME = 'ai-dashboard'
         IMAGE_TAG  = "build-${BUILD_NUMBER}"
+        JIRA_EMAIL       = credentials('JIRA_EMAIL')
+        JIRA_API_TOKEN   = credentials('JIRA_API_TOKEN')
+        JIRA_URL         = credentials('JIRA_URL')
+        JIRA_PROJECT_KEY = credentials('JIRA_PROJECT_KEY')
     }
 
     options {
@@ -92,7 +96,10 @@ pipeline {
                             docker run --rm \
                                 --add-host=host.docker.internal:host-gateway \
                                 -e OLLAMA_HOST=http://host.docker.internal:11434 \
-                                -v /var/jenkins_home/.env:/app/.env:ro \
+                                -e JIRA_EMAIL=${JIRA_EMAIL} \
+                                -e JIRA_API_TOKEN=${JIRA_API_TOKEN} \
+                                -e JIRA_URL=${JIRA_URL} \
+                                -e JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY} \
                                 ${IMAGE_NAME}:${IMAGE_TAG} \
                                 python -m orchestration.agentV1
                         """,
@@ -111,7 +118,10 @@ pipeline {
                             docker run --rm \
                                 --add-host=host.docker.internal:host-gateway \
                                 -e OLLAMA_HOST=http://host.docker.internal:11434 \
-                                -v /var/jenkins_home/.env:/app/.env:ro \
+                                -e JIRA_EMAIL=${JIRA_EMAIL} \
+                                -e JIRA_API_TOKEN=${JIRA_API_TOKEN} \
+                                -e JIRA_URL=${JIRA_URL} \
+                                -e JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY} \
                                 ${IMAGE_NAME}:${IMAGE_TAG} \
                                 python -m orchestration.agentV2
                         """,
@@ -169,7 +179,10 @@ pipeline {
                         --name ai-dashboard-feature \
                         --restart unless-stopped \
                         -p 8503:8501 \
-                        -v /var/jenkins_home/.env:/app/.env:ro \
+                        -e JIRA_EMAIL=${JIRA_EMAIL} \
+                        -e JIRA_API_TOKEN=${JIRA_API_TOKEN} \
+                        -e JIRA_URL=${JIRA_URL} \
+                        -e JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY} \
                         --add-host=host.docker.internal:host-gateway \
                         -e OLLAMA_HOST=http://host.docker.internal:11434 \
                         ${IMAGE_NAME}:${IMAGE_TAG}
