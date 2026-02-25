@@ -730,10 +730,10 @@ if data:
             text=pivot.values,
             texttemplate="%{text:.0f}",
             textfont=dict(size=10, color="white"),
-            colorbar=dict(title="Updates",
-                          tickfont=dict(color="#E8E8E8" if IS_DARK else "#2E404D"),
-                          titlefont=dict(color="#E8E8E8" if IS_DARK else "#2E404D"),
-                          thickness=12, len=0.8),
+            colorbar=dict(title=dict(text="Updates",
+                                    font=dict(color="#E8E8E8" if IS_DARK else "#2E404D")),
+                        tickfont=dict(color="#E8E8E8" if IS_DARK else "#2E404D"),
+                        thickness=12, len=0.8),
         ))
         fig_heat = apply_chart_theme(fig_heat, "Daily Activity by Team Member",
                                      280 + len(pivot.index) * 28, IS_DARK)
