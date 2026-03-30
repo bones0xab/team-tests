@@ -117,6 +117,24 @@ pipeline {
             }
         }
 
+        stage('Prepare Environment') {
+            steps {
+                echo 'Generating .env file for CI...'
+                sh """
+                    cat > .env << EOF
+DATABASE_URL=sqlite:///./test.db
+SECRET_KEY=ci-secret-key-${BUILD_NUMBER}
+DEBUG=true
+REDIS_URL=redis://redis:6379
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=testdb
+EOF
+                """
+                echo '.env file created successfully'
+            }
+        }
+
         stage('Integration Test - Stack') {
             steps {
                 echo 'Starting full stack with docker compose for integration test...'
@@ -191,6 +209,7 @@ pipeline {
             sh '''
                 docker ps -a | grep -E "smoke-" | awk '{print $1}' | xargs -r docker rm -f || true
                 docker image prune -f || true
+                rm -f .env
             '''
         }
         success {
