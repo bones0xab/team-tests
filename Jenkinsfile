@@ -94,14 +94,20 @@ pipeline {
                             -e DATABASE_URL=sqlite:///./test.db \
                             -e SECRET_KEY=test-secret-key \
                             -e DEBUG=true \
+                            -e ALGORITHM=HS256 \
+                            -e ACCESS_TOKEN_EXPIRE_MINUTES=30 \
                             ${BACKEND_IMAGE}:${IMAGE_TAG}
 
-                        sleep 15
+                        sleep 20
 
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health 2>/dev/null)
+                        echo "=== CONTAINER STATUS ==="
+                        docker ps -a | grep smoke-backend-${BUILD_NUMBER} || true
+
+                        echo "=== CONTAINER LOGS ==="
+                        docker logs smoke-backend-${BUILD_NUMBER} 2>&1 || true
+
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health 2>/dev/null || echo "000")
                         echo "Health check status: \$STATUS"
-
-                        docker logs smoke-backend-${BUILD_NUMBER} || true
 
                         docker stop smoke-backend-${BUILD_NUMBER} || true
                         docker rm   smoke-backend-${BUILD_NUMBER} || true
@@ -125,6 +131,8 @@ pipeline {
 DATABASE_URL=sqlite:///./test.db
 SECRET_KEY=ci-secret-key-${BUILD_NUMBER}
 DEBUG=true
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 REDIS_URL=redis://redis:6379
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
