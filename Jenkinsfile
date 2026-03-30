@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'DockerRedHat' }
 
     environment {
         BACKEND_IMAGE  = 'team-tests-backend'
