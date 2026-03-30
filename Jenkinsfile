@@ -92,12 +92,16 @@ pipeline {
                             --name smoke-backend-${BUILD_NUMBER} \
                             -p 8099:8000 \
                             -e DATABASE_URL=sqlite:///./test.db \
+                            -e SECRET_KEY=test-secret-key \
+                            -e DEBUG=true \
                             ${BACKEND_IMAGE}:${IMAGE_TAG}
 
-                        sleep 10
+                        sleep 15
 
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health || echo "000")
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health 2>/dev/null)
                         echo "Health check status: \$STATUS"
+
+                        docker logs smoke-backend-${BUILD_NUMBER} || true
 
                         docker stop smoke-backend-${BUILD_NUMBER} || true
                         docker rm   smoke-backend-${BUILD_NUMBER} || true
@@ -125,13 +129,13 @@ pipeline {
 
                             sleep 20
 
-                            BACKEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health || echo "000")
+                            BACKEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null)
                             echo "Backend health: \$BACKEND_STATUS"
 
-                            FRONTEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 || echo "000")
+                            FRONTEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null)
                             echo "Frontend health: \$FRONTEND_STATUS"
 
-                            METRICS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/metrics || echo "000")
+                            METRICS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/metrics 2>/dev/null)
                             echo "Metrics endpoint: \$METRICS_STATUS"
 
                             docker-compose down || true
@@ -165,7 +169,7 @@ pipeline {
 
                     docker-compose ps
 
-                    HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health || echo "000")
+                    HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null)
                     echo "Post-deploy health check: \$HEALTH"
 
                     echo '=================================================='
