@@ -209,3 +209,4 @@ __marimo__/
 .env.local 
 .env 
 nttdata-ai-agent-project-tracking/ 
+tests/ 
