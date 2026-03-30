@@ -119,11 +119,11 @@ pipeline {
 
         stage('Integration Test - Stack') {
             steps {
-                echo 'Starting full stack with docker-compose for integration test...'
+                echo 'Starting full stack with docker compose for integration test...'
                 script {
                     def result = sh(
                         script: """
-                            docker-compose -f docker-compose.yml up -d \
+                            docker compose -f docker-compose.yml up -d \
                                 --build \
                                 --remove-orphans
 
@@ -138,7 +138,7 @@ pipeline {
                             METRICS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/metrics 2>/dev/null)
                             echo "Metrics endpoint: \$METRICS_STATUS"
 
-                            docker-compose down || true
+                            docker compose down || true
 
                             if [ "\$BACKEND_STATUS" != "200" ]; then
                                 echo "Integration test failed — backend not healthy"
@@ -159,15 +159,15 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                echo 'Deploying full stack with docker-compose...'
+                echo 'Deploying full stack with docker compose...'
                 sh """
-                    docker-compose down || true
+                    docker compose down || true
 
-                    docker-compose up -d --remove-orphans
+                    docker compose up -d --remove-orphans
 
                     sleep 15
 
-                    docker-compose ps
+                    docker compose ps
 
                     HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null)
                     echo "Post-deploy health check: \$HEALTH"
