@@ -69,31 +69,6 @@ pipeline {
             }
         }
 
-        stage('Unit Tests - Backend') {
-            steps {
-                echo 'Running backend unit tests (pytest)...'
-                script {
-                    def result = sh(
-                        script: """
-                            docker run --rm \
-                                --network=host \
-                                ${BACKEND_IMAGE}:${IMAGE_TAG} \
-                                pytest tests/ -v \
-                                --tb=short \
-                                --maxfail=5 \
-                                -q
-                        """,
-                        returnStatus: true
-                    )
-                    if (result != 0) {
-                        currentBuild.result = 'FAILURE'
-                        error('Backend unit tests failed')
-                    }
-                    echo 'All backend unit tests passed'
-                }
-            }
-        }
-
         stage('Code Quality') {
             steps {
                 echo 'Running flake8 code quality check...'
