@@ -1,71 +1,142 @@
 # services/Normalisation.py
-from typing import Dict, Any
-from adapters.jira import jira_canonical_status
-from datetime import datetime, timezone
+
+from datetime import timezone
+from typing import Dict, List, Optional
 from dateutil import parser
-#French status mapping for your friend's Jira
-STATUS_CATEGORY_MAP = {
-    "Revue en cours": "indeterminate",  # In review
-    "En cours": "indeterminate",         # In progress
-    "À faire": "new",                    # To do
-    "Terminé(e)": "done",                # Done
-}
+from adapters.jira import jira_canonical_status
 
-# Standard Jira category mapping to our internal format
-CATEGORY_TO_INTERNAL = {
-    "new": "todo",
-    "indeterminate": "in_progress",  #  THIS IS THE KEY FIX
-    "done": "done",
-}
 
-def normalize_issue(raw: dict) -> Dict[str, Any]:
-    """
-    Normalize a Jira issue from API format to our internal format.
-    Handles French statuses and custom workflows.
-    """
-    fields = raw.get("fields", {})
-    
-    # Extract status information
-    status = fields.get("status", {})
-    status_name = status.get("name", "Unknown")
-    
-    # Get Jira's category key (new, indeterminate, done)
-    jira_category = status.get("statusCategory", {}).get("key", "unknown")
-    
-    # Map to our internal format (todo, in_progress, done)
-    status_category = CATEGORY_TO_INTERNAL.get(jira_category, "unknown")
-    
-    # Extract assignee
-    assignee_obj = fields.get("assignee")
-    assignee = assignee_obj.get("displayName") if assignee_obj else None
-    
-    # Calculate days since last update
-    updated_str = fields.get("updated", "")
-    updated_dt = None
-    days_since_update = 0
-    
-    if updated_str:
-        # Handle timezone formats: both "2024-01-15T10:30:00.000+0100" and "+01:00"
-        if updated_str[-3] == ":":
-            updated_str = updated_str[:-3] + updated_str[-2:]
-        
-        try:
-            updated_dt = datetime.fromisoformat(updated_str.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            delta = now - updated_dt
-            days_since_update = max(0, delta.days)
-        except (ValueError, AttributeError):
-            days_since_update = 0
-    else:
-        days_since_update = 0
-    
+def _jira_to_utc(dt_str: Optional[str]) -> Optional[str]:
+    if not dt_str:
+        return None
+    dt = parser.parse(dt_str)
+    return dt.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _extract_user(user: Optional[Dict]) -> Optional[Dict]:
+    if not user:
+        return None
     return {
-        "id": raw.get("id"),
-        "key": raw.get("key"),
-        "summary": fields.get("summary", ""),
-        "status_name": status_name,
-        "status_category": status_category,  # Now correctly mapped!
-        "assignee": assignee,
-        "updated_at": updated_dt,
-        "days_since_update": days_since_update,
+        "id": user.get("accountId") or user.get("name") or user.get("key"),
+        "name": user.get("displayName"),
     }
+
+
+def normalize_issue(raw: Dict) -> Dict:
+    fields = raw.get("fields", {})
+
+    status = fields.get("status") or {}
+    status_name = status.get("name")
+    jira_status_category = (status.get("statusCategory") or {}).get("name")
+
+    canonical = jira_canonical_status(
+        status_name=status_name,
+        jira_status_category=jira_status_category,
+    )
+
+    # ── Parse the timestamp exactly once ─────────────────────────────────
+    updated_raw = fields.get("updated")
+    updated_at_utc = None
+    days_since_update = None
+
+    if updated_raw:
+        from datetime import datetime
+        updated_dt = parser.parse(updated_raw).astimezone(timezone.utc)
+        updated_at_utc = (
+            updated_dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        )
+        days_since_update = (datetime.now(timezone.utc) - updated_dt).days
+
+    assignee = _extract_user(fields.get("assignee"))
+    issuelinks = fields.get("issuelinks") or []
+
+    links = []
+    for l in issuelinks:
+        t = (l.get("type") or {}).get("name")
+        inward = l.get("inwardIssue")
+        outward = l.get("outwardIssue")
+        links.append({
+            "type": t,
+            "inward": {
+                "id": inward.get("id"),
+                "key": inward.get("key"),
+            } if inward else None,
+            "outward": {
+                "id": outward.get("id"),
+                "key": outward.get("key"),
+            } if outward else None,
+        })
+
+    missing = []
+    if not raw.get("id"):
+        missing.append("id")
+    if not raw.get("key"):
+        missing.append("key")
+    if not fields.get("summary"):
+        missing.append("fields.summary")
+    if not updated_raw:
+        missing.append("fields.updated")
+    if status_name and canonical == "unknown":
+        missing.append(f"status_map:{status_name}")
+
+    return {
+        "identity": {
+            "issue_id": raw.get("id"),
+            "issue_key": raw.get("key"),
+            "summary": fields.get("summary"),
+        },
+        "temporality": {
+            "updated_at_utc": updated_at_utc,
+            "days_since_update": days_since_update,
+        },
+        "semantics": {
+            "status_canonical": canonical,
+        },
+        "actors": {
+            "assignee": assignee,
+        },
+    }
+
+
+
+def normalize_project(raw: Dict) -> Dict:
+    category = raw.get("projectCategory") or {}
+
+    missing = []
+    if not raw.get("id"):
+        missing.append("id")
+    if not raw.get("key"):
+        missing.append("key")
+    if not raw.get("name"):
+        missing.append("name")
+
+
+    return {
+        "identity": {
+            "provider": "jira",
+            "project_id": raw.get("id"),
+            "project_key": raw.get("key"),
+            "project_name": raw.get("name"),
+            "self_url": raw.get("self")
+        },
+        "classification": {
+            "type": raw.get("projectTypeKey"),
+            "category": {
+                "id": category.get("id"),
+                "name": category.get("name"),
+                "description": category.get("description"),
+            } if category else None,
+        },
+        "governance": {
+            "archived": raw.get("archived", False),
+        },
+        "metadata": {
+            "avatar_urls": raw.get("avatarUrls"),
+        },
+        "resilience": {
+            "missing_fields": missing,
+        },
+    }
+
+def normalize_projects(raw_list: List[Dict]) -> List[Dict]:
+    return [normalize_project(p) for p in raw_list]

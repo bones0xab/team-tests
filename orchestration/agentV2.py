@@ -1,161 +1,238 @@
-# orchestration/agentV2.py
+import os
 import json
-from typing import Dict, Any, Optional
-
-from langchain_core.prompts import MessagesPlaceholder, ChatPromptTemplate
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.tools import tool
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TypedDict, Dict, Any, List
 from dotenv import load_dotenv
+load_dotenv()
 
-# Gemini import (uncomment when ready to test)
-# from langchain_google_genai import ChatGoogleGenerativeAI
-
-# Fallback to Ollama for testing
-from langchain_ollama import ChatOllama
-
+import re
+from openai import OpenAI
+from langgraph.graph import StateGraph, END
 from services.Fetch import search_issues
 from services.Normalisation import normalize_issue
 from orchestration.metrics import compute_signals
 from orchestration.rules import evaluate_rules
 
-load_dotenv()
+
+class ProjectState(TypedDict):
+    issues: List[Dict[str, Any]]
+    metrics: Dict[str, Any]
+    rules: Dict[str, Any]
+    llm_output: Dict[str, Any]
+    project_key: str
 
 
-def get_jira_data():
-    """Fetch and normalize Jira issues from last 30 days"""
-    jql = "created >= -30"
-    fields = [
-        "summary", "status", "assignee", "reporter",
-        "created", "updated", "resolutiondate",
-        "issuetype", "priority", "project",
-        "labels", "components", "parent",
-        "issuelinks", "comment", "attachment"
-    ]
+CACHE_TTL = 300
+ISSUES_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def get_jira_data_issues(project_key: str | None = None):
+    cache_key = project_key or "__all__"
+    cached = ISSUES_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached["timestamp"] < CACHE_TTL:
+        return cached["issues"]
+
+    jql = "created >= -30d"
+    if project_key:
+        safe = project_key.replace('"', '\\"')
+        jql += f' AND project = "{safe}"'
+    fields = ["summary", "status", "assignee", "project"]
     issues = search_issues(jql, fields)
-    return [normalize_issue(i) for i in issues]
+    normalized = [normalize_issue(i) for i in issues]
+
+    ISSUES_CACHE[cache_key] = {"issues": normalized, "timestamp": now}
+    return normalized
 
 
-@tool
-def get_project_metrics() -> Dict[str, Any]:
-    """
-    Compute project metrics from Jira issues.
-    Returns counts, aging, and risk indicators.
-    """
-    data = get_jira_data()
-    metrics = compute_signals(data)
-    print(f"[DEBUG] V2 Metrics computed: {metrics.get('total', 0)} total issues")
-    return metrics
+def _snapshot_save(metrics, rules):
+    snapshot = {
+        "schema_version": "1.0",
+        "snapshot_time_utc": datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z"),
+        "metrics": metrics,
+        "rules": rules,
+    }
+
+    Path("snapshots").mkdir(exist_ok=True)
+    tmp = "snapshots/latest.json.tmp"
+    final = "snapshots/latest.json"
+
+    with open(tmp, "w") as f:
+        json.dump(snapshot, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(tmp, final)
 
 
-@tool
-def get_rules(metrics: Dict[str, Any], thresholds: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    Deterministically evaluate metrics into health/risks/actions/proof.
-    """
-    result = evaluate_rules(metrics, thresholds=thresholds)
-    print(f"[DEBUG] V2 Project health: {result.get('project_health', 'UNKNOWN')}")
-    return result
+from app.services.services import fetch_dashboard_data
 
+def fetch_node(state: ProjectState):
+    # Fetches real Jira data and computes ONE consistent scoring logic using the shared service.
+    data = fetch_dashboard_data(state.get("project_key"), days_back=30)
+    if not data:
+        return {"issues": [], "metrics": {}, "rules": {}}
+    return {
+        "issues": data["issues"],
+        "metrics": data["metrics"],
+        "rules": data["rules"]
+    }
 
-def run_ai_analysis_gemini():
-    """
-    Run AI analysis using Gemini (when ready) or Ollama (fallback).
+def metrics_node(state: ProjectState):
+    # Shared service already computed metrics.
+    return {}
+
+def rules_node(state: ProjectState):
+    # Shared service already computed rules.
+    return {}
+
     
-    Returns:
-        Dictionary with project health report in JSON format
-    """
-    print(f"\n{'='*60}")
-    print("🤖 AGENT V2 (GEMINI/OLLAMA) STARTED")
-    print(f"{'='*60}\n")
-    
-    # OPTION 1: Gemini (uncomment when ready to test)
-    # llm = ChatGoogleGenerativeAI(
-    #     model="gemini-2.5-flash",
-    #     temperature=0.2
-    # )
-    # print("🔹 Using Gemini model")
-    
-    # OPTION 2: Ollama (current fallback)
-    llm = ChatOllama(
-        model="qwen2.5:7b-instruct",
-        temperature=0.2
-    )
-    print("🔹 Using Ollama fallback")
-    
-    tools = [get_project_metrics, get_rules]
-    
-    SYSTEM_PROMPT = """# ROLE
-    You are a Senior Project Health Auditor. Your goal is to map raw Jira metrics to business risks using a deterministic rule engine.
+#   base_url = "http://102.54.244.89:8088/ollama/api/v1",
+#     api_key = "sk-Df7Qw4Ln2Tp9Hy5Km8Br3Zv6Uc1AsXeJ"
+# )
+ 
+# resp = client.chat.completions.create(
+#     model = "mistral",
+ 
+#     messages = [{"role": "user", "content": "Hi! Who are you, and how you can help me?"}],)
+ 
+# print(resp.choices[0].message.content)
 
-    # PROTOCOL (Strict)
-    1. FETCH: Call `get_project_metrics` to get the raw state
-    2. EVALUATE: Pass ALL metrics to `get_rules`. Do NOT interpret metrics yourself
-    3. FORMAT: Map the `get_rules` output directly into the JSON schema below
+def _extract_json_payload(content: str) -> Any:
+    if not content:
+        raise ValueError("Empty response content from OLLAMA")
 
-    # CONSTRAINTS
-    - NO hallucinations: If metrics are 0, report 0
-    - NO conversational filler: Output starts with '{{' and ends with '}}'
-    - NOTIFICATION: `notify` is TRUE only if `project_health` is "AT_RISK"
+    # Remove markdown fences if present.
+    cleaned = content.strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
 
-    # OUTPUT SCHEMA
-    {{
-    "project_health": "HEALTHY | WATCH | AT_RISK",
-    "summary": ["max 2 bullets"],
-    "risks": ["max 3 bullets"],
-    "actions": ["max 3 bullets"],
-    "notify": boolean,
-    "proof": []
-    }}
-    """
-    
-    prompt_template = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ("human", "{input}")
-    ])
-    
-    agent = create_tool_calling_agent(llm, tools, prompt_template)
-    executor = AgentExecutor(agent=agent, tools=tools, verbose=True, max_iterations=5)
-    
     try:
-        result = executor.invoke({"input": "Generate the project health report JSON now."})
-        output = result.get("output", "")
-        
-        print(f"\n{'='*60}")
-        print("✅ AGENT V2 COMPLETED")
-        print(f"{'='*60}\n")
-        
-        # Clean and parse
-        if isinstance(output, str):
-            clean = output.replace("```json", "").replace("```", "").strip()
-            try:
-                return json.loads(clean)
-            except json.JSONDecodeError as e:
-                print(f"[WARNING] JSON parse error: {e}")
-                return {
-                    "project_health": "UNKNOWN",
-                    "summary": ["Could not parse response"],
-                    "risks": [],
-                    "actions": [],
-                    "notify": False,
-                    "proof": []
-                }
-        
-        return output
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return json.loads(cleaned[start : end + 1])
+
+    raise ValueError("No valid JSON object found in OLLAMA response")
+
+
+def _normalize_project_analysis(payload: Any) -> Dict[str, Any]:
+    """Ensures the output is a dictionary with risks, actions, and speed_analysis."""
+    if not isinstance(payload, dict):
+        payload = {}
     
-    except Exception as e:
-        print(f"[ERROR] AgentV2 failed: {e}")
-        return {
-            "project_health": "UNKNOWN",
-            "summary": ["AI analysis unavailable"],
-            "risks": ["System error"],
-            "actions": ["Check logs"],
-            "notify": False,
-            "proof": []
+    risks = payload.get("risks", [])
+    if not isinstance(risks, list):
+        risks = [str(risks)] if risks else []
+    
+    actions = payload.get("actions", [])
+    if not isinstance(actions, list):
+        actions = [str(actions)] if actions else []
+        
+    return {
+        "risks": [str(r) for r in risks],
+        "actions": [str(a) for a in actions],
+        "speed_analysis": str(payload.get("speed_analysis", "Not analyzed")),
+    }
+
+
+def llm_node(state: ProjectState):
+    # Direct OpenAI-compatible call to Ollama/Mistral
+    client = OpenAI(
+        base_url=os.environ.get("OLLAMA_BASE_URL", "http://102.54.244.89:8088/ollama/api/v1"),
+        api_key=os.environ.get("OLLAMA_API_KEY"),
+        timeout=float(os.environ.get("OLLAMA_TIMEOUT_SECONDS", "120")),
+    )
+    model = os.environ.get("OLLAMA_MODEL", "mistral")
+
+    prompt = f"""
+Analyse ces données Jira. RÉPONDS UNIQUEMENT JSON valide.
+
+ISSUES (Sample): {json.dumps(state.get("issues", [])[:50])}
+METRICS: {json.dumps(state["metrics"])}
+RULES: {json.dumps(state["rules"])}
+
+Format EXACT :
+{{
+  "risks": ["..."], 
+  "actions": ["..."],
+  "speed_analysis": "Évaluation du rythme du projet (vélocité, délais, accélération)"
+}}
+"""
+
+    start_time = time.time()
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+        latency = time.time() - start_time
+        raw_content = response.choices[0].message.content or ""
+        
+        # Robust parsing logic from AIService
+        parsed_raw = _extract_json_payload(raw_content)
+        parsed = _normalize_project_analysis(parsed_raw)
+        
+        # Enforce deterministic project health instead of letting LLM guess
+        parsed["project_health"] = state["rules"].get("project_health", "UNKNOWN")
+        
+        # Add technical speed information
+        parsed["technical_speed"] = {
+            "latency_seconds": round(latency, 3),
+            "tokens_per_second": None # No token count in basic OpenAI response
+        }
+    except Exception as exc:
+        latency = time.time() - start_time
+        # Fallback/error handling: fallback to rules-based data
+        parsed = {
+            "project_health": state["rules"].get("project_health", "UNKNOWN"),
+            "risks": state["rules"].get("risks", []),
+            "actions": state["rules"].get("actions", []),
+            "speed_analysis": "Error during analysis",
+            "raw_llm_error": str(exc),
+            "technical_speed": {
+                "latency_seconds": round(latency, 3)
+            }
         }
 
+    return {"llm_output": parsed}
 
-if __name__ == "__main__":
-    print("🤖 Testing AgentV2 (Gemini/Ollama)...")
-    result = run_ai_analysis_gemini()
-    print(json.dumps(result, indent=2))
+
+def snapshot_node(state: ProjectState):
+    _snapshot_save(state["metrics"], state["rules"])
+    return {}
+
+
+load_dotenv()
+
+builder = StateGraph(ProjectState)
+
+builder.add_node("fetch", fetch_node)
+builder.add_node("compute_metrics", metrics_node)
+builder.add_node("evaluate_rules", rules_node)
+builder.add_node("generate_llm", llm_node)
+builder.add_node("snapshot", snapshot_node)
+
+builder.set_entry_point("fetch")
+
+builder.add_edge("fetch", "compute_metrics")
+builder.add_edge("compute_metrics", "evaluate_rules")
+builder.add_edge("evaluate_rules", "generate_llm")
+builder.add_edge("generate_llm", "snapshot")
+builder.add_edge("snapshot", END)
+
+graph = builder.compile()
+
+
+def run_ai_analysis(project_key: str | None = None):
+    """Run the LangGraph pipeline once (for scripts or app.services.ai_service)."""
+    return graph.invoke({"project_key": project_key})

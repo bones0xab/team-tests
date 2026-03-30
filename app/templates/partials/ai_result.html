@@ -1,0 +1,7 @@
+{% if error %}
+    <div class="alert alert-error">AI Error: {{ error }}</div>
+{% elif result %}
+    <div class="ai-result-box">
+        <pre>{{ result }}</pre>
+    </div>
+{% endif %}

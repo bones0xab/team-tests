@@ -1,0 +1,64 @@
+/* ===== AI PAGE - NTT DATA THEME ===== */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+}
+
+@media (max-width: 768px) {
+  .header-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0.5rem;
+  }
+  
+  .header-actions .input, 
+  .header-actions .btn-primary {
+    width: 100%;
+    margin-right: 0 !important;
+  }
+}
+
+.input {
+  padding: 0.55rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid #D1D5DB;
+  background: #FFFFFF;
+  font-size: 0.9rem;
+  color: #1F2937;
+  transition: all 0.2s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #0072CE;
+  box-shadow: 0 0 0 2px rgba(0, 114, 206, 0.15);
+}
+
+.btn-primary {
+  background: #0033A0;
+  color: #FFFFFF;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #001A57;
+}
+
+.btn-primary:disabled {
+  background: #A0AEC0;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.page-header {
+  border-bottom: 1px solid #E6F0FA;
+  padding-bottom: 1rem;
+}

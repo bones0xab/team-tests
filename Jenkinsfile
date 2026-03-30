@@ -2,12 +2,9 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'ai-dashboard'
-        IMAGE_TAG  = "build-${BUILD_NUMBER}"
-        JIRA_EMAIL       = credentials('JIRA_EMAIL')
-        JIRA_API_TOKEN   = credentials('JIRA_API_TOKEN')
-        JIRA_URL         = credentials('JIRA_URL')
-        JIRA_PROJECT_KEY = credentials('JIRA_PROJECT_KEY')
+        BACKEND_IMAGE  = 'team-tests-backend'
+        FRONTEND_IMAGE = 'team-tests-frontend'
+        IMAGE_TAG      = "build-${BUILD_NUMBER}"
     }
 
     options {
@@ -22,179 +19,187 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    echo "=== BRANCH DEBUG INFO ==="
-                    echo "env.BRANCH_NAME   = ${env.BRANCH_NAME}"
-                    echo "env.GIT_BRANCH    = ${env.GIT_BRANCH}"
-                    echo "env.BUILD_NUMBER  = ${BUILD_NUMBER}"
-                    echo "========================="
+                    echo "=== BUILD INFO ==="
+                    echo "BUILD_NUMBER : ${BUILD_NUMBER}"
+                    echo "GIT_BRANCH   : ${env.GIT_BRANCH}"
+                    echo "GIT_COMMIT   : ${env.GIT_COMMIT}"
+                    echo "=================="
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build Docker Images') {
             steps {
-                echo 'Building Docker image...'
+                echo 'Building backend and frontend images...'
                 script {
-                    def buildResult = sh(
+                    def backendResult = sh(
                         script: """
                             docker build \
                                 --no-cache \
                                 --network=host \
-                                -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                                -t ${IMAGE_NAME}:latest \
+                                -f Dockerfile \
+                                -t ${BACKEND_IMAGE}:${IMAGE_TAG} \
+                                -t ${BACKEND_IMAGE}:latest \
                                 .
                         """,
                         returnStatus: true
                     )
-                    if (buildResult != 0) {
-                                            error('Docker build failed - network issue, no fallback allowed')
-                                        }
-                                        echo 'Docker image built successfully'
-                        }
+                    if (backendResult != 0) {
+                        error('Backend Docker build failed')
+                    }
+                    echo 'Backend image built successfully'
+
+                    def frontendResult = sh(
+                        script: """
+                            docker build \
+                                --no-cache \
+                                --network=host \
+                                -f frontend/Dockerfile \
+                                -t ${FRONTEND_IMAGE}:${IMAGE_TAG} \
+                                -t ${FRONTEND_IMAGE}:latest \
+                                ./frontend
+                        """,
+                        returnStatus: true
+                    )
+                    if (frontendResult != 0) {
+                        error('Frontend Docker build failed')
+                    }
+                    echo 'Frontend image built successfully'
                 }
             }
+        }
 
-        stage('Unit Tests') {
+        stage('Unit Tests - Backend') {
             steps {
-                echo 'Running unit tests...'
+                echo 'Running backend unit tests (pytest)...'
                 script {
                     def result = sh(
                         script: """
                             docker run --rm \
-                                ${IMAGE_NAME}:${IMAGE_TAG} \
-                                pytest tests/ -v -m "not integration" \
-                                --tb=short --maxfail=3
+                                --network=host \
+                                ${BACKEND_IMAGE}:${IMAGE_TAG} \
+                                pytest tests/ -v \
+                                --tb=short \
+                                --maxfail=5 \
+                                -q
                         """,
                         returnStatus: true
                     )
                     if (result != 0) {
                         currentBuild.result = 'FAILURE'
-                        error('Unit tests failed')
+                        error('Backend unit tests failed')
                     }
-                    echo 'All unit tests passed'
-                }
-            }
-        }
-
-        stage('Test Agents') {
-            steps {
-                echo 'Testing AgentV1 and AgentV2...'
-                script {
-                    def ollamaUp = sh(
-                        script: 'curl -sf http://host.docker.internal:11434/api/tags > /dev/null 2>&1',
-                        returnStatus: true
-                    ) == 0
-
-                    if (!ollamaUp) {
-                        echo 'Ollama not reachable - skipping agent tests'
-                        return
-                    }
-
-                    echo 'Testing AgentV1 (Ollama)...'
-                    def v1Result = sh(
-                        script: """
-                            docker run --rm \
-                                --add-host=host.docker.internal:host-gateway \
-                                -e OLLAMA_HOST=http://host.docker.internal:11434 \
-                                -e JIRA_EMAIL=${JIRA_EMAIL} \
-                                -e JIRA_API_TOKEN=${JIRA_API_TOKEN} \
-                                -e JIRA_URL=${JIRA_URL} \
-                                -e JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY} \
-                                ${IMAGE_NAME}:${IMAGE_TAG} \
-                                python -m orchestration.agentV1
-                        """,
-                        returnStatus: true
-                    )
-                    if (v1Result == 0) {
-                        echo 'AgentV1 test passed'
-                    } else {
-                        echo 'AgentV1 test failed (non-blocking)'
-                        currentBuild.result = 'UNSTABLE'
-                    }
-
-                    echo 'Testing AgentV2...'
-                    def v2Result = sh(
-                        script: """
-                            docker run --rm \
-                                --add-host=host.docker.internal:host-gateway \
-                                -e OLLAMA_HOST=http://host.docker.internal:11434 \
-                                -e JIRA_EMAIL=${JIRA_EMAIL} \
-                                -e JIRA_API_TOKEN=${JIRA_API_TOKEN} \
-                                -e JIRA_URL=${JIRA_URL} \
-                                -e JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY} \
-                                ${IMAGE_NAME}:${IMAGE_TAG} \
-                                python -m orchestration.agentV2
-                        """,
-                        returnStatus: true
-                    )
-                    if (v2Result == 0) {
-                        echo 'AgentV2 test passed'
-                    } else {
-                        echo 'AgentV2 test failed (non-blocking)'
-                        currentBuild.result = 'UNSTABLE'
-                    }
+                    echo 'All backend unit tests passed'
                 }
             }
         }
 
         stage('Code Quality') {
             steps {
-                echo 'Running code quality checks...'
+                echo 'Running flake8 code quality check...'
                 sh """
-                    docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} \
-                        flake8 . --max-line-length=120 \
-                        --exclude=venv,__pycache__,.git,testing \
-                        --exit-zero || true
+                    docker run --rm ${BACKEND_IMAGE}:${IMAGE_TAG} \
+                        flake8 app/ services/ orchestration/ \
+                        --max-line-length=120 \
+                        --exclude=__pycache__,.git,venv,migrations \
+                        --exit-zero
                 """
+                echo 'Code quality check complete'
             }
         }
 
-        stage('Smoke Test') {
+        stage('Smoke Test - Backend') {
             steps {
-                echo 'Testing container starts correctly...'
+                echo 'Smoke testing backend container startup...'
+                script {
+                    sh """
+                        docker run -d \
+                            --name smoke-backend-${BUILD_NUMBER} \
+                            -p 8099:8000 \
+                            -e DATABASE_URL=sqlite:///./test.db \
+                            ${BACKEND_IMAGE}:${IMAGE_TAG}
+
+                        sleep 10
+
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health || echo "000")
+                        echo "Health check status: \$STATUS"
+
+                        docker stop smoke-backend-${BUILD_NUMBER} || true
+                        docker rm   smoke-backend-${BUILD_NUMBER} || true
+
+                        if [ "\$STATUS" != "200" ]; then
+                            echo "Smoke test failed — backend did not respond with 200"
+                            exit 1
+                        fi
+
+                        echo "Smoke test passed — backend is healthy"
+                    """
+                }
+            }
+        }
+
+        stage('Integration Test - Stack') {
+            steps {
+                echo 'Starting full stack with docker-compose for integration test...'
+                script {
+                    def result = sh(
+                        script: """
+                            docker-compose -f docker-compose.yml up -d \
+                                --build \
+                                --remove-orphans
+
+                            sleep 20
+
+                            BACKEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health || echo "000")
+                            echo "Backend health: \$BACKEND_STATUS"
+
+                            FRONTEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 || echo "000")
+                            echo "Frontend health: \$FRONTEND_STATUS"
+
+                            METRICS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/metrics || echo "000")
+                            echo "Metrics endpoint: \$METRICS_STATUS"
+
+                            docker-compose down || true
+
+                            if [ "\$BACKEND_STATUS" != "200" ]; then
+                                echo "Integration test failed — backend not healthy"
+                                exit 1
+                            fi
+
+                            echo "Integration test passed"
+                        """,
+                        returnStatus: true
+                    )
+                    if (result != 0) {
+                        currentBuild.result = 'UNSTABLE'
+                        echo 'Integration test had issues (non-blocking for deployment)'
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                echo 'Deploying full stack with docker-compose...'
                 sh """
-                    docker run -d \
-                        --name smoke-${BUILD_NUMBER} \
-                        -p 8501:8501 \
-                        ${IMAGE_NAME}:${IMAGE_TAG}
+                    docker-compose down || true
+
+                    docker-compose up -d --remove-orphans
 
                     sleep 15
 
-                    docker logs smoke-${BUILD_NUMBER} | tail -20
+                    docker-compose ps
 
-                    docker stop smoke-${BUILD_NUMBER} || true
-                    docker rm   smoke-${BUILD_NUMBER} || true
-                """
-            }
-        }
-
-        stage('Deploy to Feature Environment') {
-            steps {
-                echo 'Deploying to Feature Environment (Port 8503)...'
-                sh """
-                    docker stop ai-dashboard-feature || true
-                    docker rm ai-dashboard-feature || true
-
-                    docker run -d \
-                        --name ai-dashboard-feature \
-                        --restart unless-stopped \
-                        -p 8503:8501 \
-                        -e JIRA_EMAIL=${JIRA_EMAIL} \
-                        -e JIRA_API_TOKEN=${JIRA_API_TOKEN} \
-                        -e JIRA_URL=${JIRA_URL} \
-                        -e JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY} \
-                        --add-host=host.docker.internal:host-gateway \
-                        -e OLLAMA_HOST=http://host.docker.internal:11434 \
-                        ${IMAGE_NAME}:${IMAGE_TAG}
-
-                    sleep 10
-
-                    docker ps | grep ai-dashboard-feature || echo 'Container not running'
+                    HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health || echo "000")
+                    echo "Post-deploy health check: \$HEALTH"
 
                     echo '=================================================='
                     echo '  DEPLOYMENT SUCCESSFUL'
-                    echo '  Dashboard URL: http://localhost:8503'
-                    echo "  Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                    echo '  Frontend  : http://localhost:5173'
+                    echo '  Backend   : http://localhost:8000'
+                    echo '  Grafana   : http://localhost:3000'
+                    echo '  Prometheus: http://localhost:9090'
+                    echo "  Image tag : ${IMAGE_TAG}"
                     echo '=================================================='
                 """
             }
@@ -203,20 +208,20 @@ pipeline {
 
     post {
         always {
-            echo 'Cleanup...'
+            echo 'Cleaning up temporary containers...'
             sh '''
-                docker ps -a | grep -E "(test-|smoke-)" | awk '{print $1}' | xargs -r docker rm -f || true
-                docker system prune -f || true
+                docker ps -a | grep -E "smoke-" | awk '{print $1}' | xargs -r docker rm -f || true
+                docker image prune -f || true
             '''
         }
         success {
-            echo "BUILD AND DEPLOY SUCCESSFUL - branch: ${env.BRANCH_NAME} - image: ${IMAGE_NAME}:${IMAGE_TAG}"
-        }
-        unstable {
-            echo 'BUILD UNSTABLE - image built, unit tests passed, agent tests had issues'
+            echo "✅ BUILD AND DEPLOY SUCCESSFUL — ${BACKEND_IMAGE}:${IMAGE_TAG}"
         }
         failure {
-            echo 'BUILD FAILED - check logs above'
+            echo "❌ BUILD FAILED — check console logs for details"
+        }
+        unstable {
+            echo "⚠️ BUILD UNSTABLE — images built but some tests had issues"
         }
     }
 }

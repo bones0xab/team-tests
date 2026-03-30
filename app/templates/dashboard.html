@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.dashboard-layout{
+  display:flex;
+  min-height:100vh;
+}
+
+.sidebar{
+  width:280px;
+  background:#0f172a;
+  color:#fff;
+  padding:32px 24px;
+  display:flex;
+  flex-direction:column;
+  gap:32px;
+}
+
+.sidebar h3{
+  font-size:13px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  opacity:.7;
+}
+
+.sidebar form{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+.sidebar label{
+  font-size:13px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.sidebar select{
+  background:#1e293b;
+  border:1px solid #334155;
+  color:#fff;
+  padding:10px 12px;
+  border-radius:10px;
+  font-size:14px;
+}
+
+.sidebar select:focus{
+  outline:none;
+  border-color:#4f46e5;
+}
+
+.btn-primary{
+  padding:10px 14px;
+  border:none;
+  border-radius:10px;
+  background:#4f46e5;
+  color:#fff;
+  font-weight:600;
+  cursor:pointer;
+  transition:.2s ease;
+}
+
+.btn-primary:hover{
+  background:#4338ca;
+  transform:translateY(-1px);
+}
+
+.main-content{
+  flex:1;
+  padding:40px;
+  background:#f8fafc;
+}
+
+.page-header{
+  margin-bottom:32px;
+}
+
+.page-header h1{
+  font-size:28px;
+  font-weight:700;
+  margin-bottom:6px;
+}
+
+.analytics-section{
+  margin-bottom:48px;
+}
+
+.section-title{
+  font-size:18px;
+  font-weight:600;
+  margin-bottom:20px;
+}
+
+.kpi-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:24px;
+  margin-bottom:40px;
+}
+
+.kpi-card{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:14px;
+  padding:24px;
+  box-shadow:0 1px 2px rgba(0,0,0,0.04);
+}
+
+.kpi-label{
+  font-size:13px;
+  color:#64748b;
+  margin-bottom:12px;
+  display:block;
+}
+
+.kpi-value{
+  font-size:32px;
+  font-weight:700;
+}
+
+.chart-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+  gap:24px;
+}
+
+.chart-card{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:14px;
+  padding:24px;
+}
+
+.table-card{
+  background:#fff;
+  border:1px solid #e2e8f0;
+  border-radius:14px;
+  overflow:hidden;
+}
+
+.issues-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:14px;
+}
+
+.issues-table thead{
+  background:#f1f5f9;
+}
+
+.issues-table th,
+.issues-table td{
+  padding:14px 16px;
+  text-align:left;
+  border-bottom:1px solid #e2e8f0;
+}
+
+.badge{
+  padding:4px 10px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:600;
+  color:#fff;
+}
+
+.badge.todo{background:#64748b}
+.badge.in_progress{background:#f59e0b}
+.badge.done{background:#10b981}
+
+.alert{
+  padding:16px;
+  border-radius:12px;
+  background:#fee2e2;
+  color:#991b1b;
+  margin-bottom:24px;
+}
+</style>
+
+<div class="dashboard-layout">
+
+<aside class="sidebar">
+  <div>
+    <h3>Select Project</h3>
+    <form method="GET" action="/">
+
+      <label>Project</label>
+      <select name="project_key" required onchange="this.form.submit()">
+        <option value="">-- Select Project --</option>
+        {% for project in projects %}
+         <option value="{{ project.identity.project_key }}"
+      {% if project.identity.project_key == project_key %}selected{% endif %}>
+      {{ project.identity.project_key }} — {{ project.identity.project_name }}
+    </option>
+        {% endfor %}
+      </select>
+
+      <label>Time Range</label>
+      <select name="days_back">
+        <option value="7"  {% if days_back == 7  %}selected{% endif %}>Last 7 days</option>
+        <option value="30" {% if days_back == 30 %}selected{% endif %}>Last 30 days</option>
+        <option value="90" {% if days_back == 90 %}selected{% endif %}>Last 90 days</option>
+      </select>
+
+      <button type="submit" class="btn-primary">Refresh</button>
+    </form>
+  </div>
+</aside>
+
+<main class="main-content">
+
+<div class="page-header">
+  <h1>AI Project Intelligence Dashboard</h1>
+  <p>Logged in as: <strong>{{ user.username }}</strong></p>
+</div>
+
+{% if error %}
+<div class="alert">{{ error }}</div>
+{% else %}
+
+<div class="analytics-section">
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-label">Total Issues</span>
+      <span class="kpi-value">{{ metrics.total }}</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Completion</span>
+      <span class="kpi-value">{{ "%.1f"|format(metrics.done_ratio * 100) }}%</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Work In Progress</span>
+      <span class="kpi-value">{{ metrics.wip }}</span>
+    </div>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="section-title">Issues by Status</div>
+      <div id="status-chart"></div>
+    </div>
+    <div class="chart-card">
+      <div class="section-title">WIP Distribution</div>
+      <div id="assignee-chart"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const chartData = {{ chart_data | tojson | safe }};
+Plotly.newPlot("status-chart", [{
+  x: chartData.labels,
+  y: chartData.values,
+  type: "bar",
+  marker:{color:"#4f46e5"}
+}],{
+  margin:{t:20},
+  paper_bgcolor:"transparent",
+  plot_bgcolor:"transparent"
+});
+
+const assigneeData = {{ assignee_chart_data | tojson | safe }};
+Plotly.newPlot("assignee-chart", [{
+  labels: assigneeData.labels,
+  values: assigneeData.values,
+  type:"pie"
+}],{
+  margin:{t:20}
+});
+</script>
+
+<div class="section">
+  <div class="section-title">Project Issues</div>
+  <div class="table-card">
+    <table class="issues-table">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Summary</th>
+          <th>Status</th>
+          <th>Assignee</th>
+          <th>Days Since Update</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in issues_table %}
+        <tr>
+          <td>{{ row.key }}</td>
+          <td>{{ row.summary }}</td>
+          <td>
+            <span class="badge {{ row.status_name|lower|replace(' ','_') }}">
+              {{ row.status_name }}
+            </span>
+          </td>
+          <td>{{ row.assignee or "Unassigned" }}</td>
+          <td>{{ row.days_since_update }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endif %}
+</main>
+</div>
+
+{% endblock %}

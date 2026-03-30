@@ -1,0 +1,33 @@
+# prometheus.yml
+# Place this file in:  C:\Users\user\team-tests\prometheus\prometheus.yml
+# ──────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval:     30s   # scrape every 30 seconds
+  evaluation_interval: 30s
+
+# ── Alert rules file ───────────────────────────────────────────
+rule_files:
+  - "alert_rules.yml"
+
+# ── Alertmanager (optional — skip if using Grafana alerts) ────
+alerting:
+   alertmanagers:
+     - static_configs:
+         - targets: ["alertmanager:9093"]
+
+# ── Scrape targets ─────────────────────────────────────────────
+scrape_configs:
+
+  # Your FastAPI backend
+  - job_name: "ai-project-dashboard"
+    static_configs:
+      - targets: ['backend:8000']   # if running in Docker
+      # - targets: ["backend:8000"]             # if running natively
+    metrics_path: "/api/metrics"
+
+  # Jenkins (uncomment when Jenkins is running)
+  # - job_name: "jenkins"
+  #   static_configs:
+  #     - targets: ["host.docker.internal:8080"]
+  #   metrics_path: "/prometheus"

@@ -1,0 +1,47 @@
+# alert_rules.yml
+# Place next to prometheus.yml
+# ──────────────────────────────────────────────────────────────
+
+groups:
+  - name: jira_project_health
+    rules:
+
+      # CRITICAL — project is AT_RISK
+      - alert: ProjectAtRisk
+        expr: jira_project_health >= 2
+        for: 1m
+        labels:
+          severity: CRITICAL
+        annotations:
+          summary: "Project {{ $labels.project_key }} is AT_RISK"
+          description: "Health score reached AT_RISK level. Immediate action required."
+
+      # WARNING — project needs watching
+      - alert: ProjectOnWatch
+        expr: jira_project_health == 1
+        for: 5m
+        labels:
+          severity: WARNING
+        annotations:
+          summary: "Project {{ $labels.project_key }} is on WATCH"
+          description: "Project health degraded to WATCH status."
+
+      # WARNING — too many stale issues
+      - alert: TooManyStaleIssues
+        expr: jira_issues_stale > 10
+        for: 5m
+        labels:
+          severity: WARNING
+        annotations:
+          summary: "{{ $labels.project_key }} has {{ $value }} stale issues"
+          description: "More than 10 in-progress issues have not been updated recently."
+
+      # WARNING — high WIP ratio
+      - alert: HighWipRatio
+        expr: jira_issues_wip / jira_issues_total > 0.7
+        for: 5m
+        labels:
+          severity: WARNING
+        annotations:
+          summary: "{{ $labels.project_key }} WIP ratio > 70%"
+          description: "Too many issues in progress relative to total."

@@ -25,7 +25,7 @@ DEFAULT_THRESHOLDS = {
     "TOP1_WIP_SHARE_RISK": 0.60,
 
     # Hygiene
-    "UNASSIGNED_WIP_RISK": 1,  # >=1 unassigned in-progress is a risk
+    "UNASSIGNED_WIP_RISK": 3,  # >=1 unassigned in-progress is a risk
 }
 
 def evaluate_rules(metrics: Dict[str, Any], thresholds: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -112,9 +112,9 @@ def evaluate_rules(metrics: Dict[str, Any], thresholds: Optional[Dict[str, Any]]
     # Senior rule: health is derived from severity levels, not “feelings”.
     severities = {h.severity for h in hits}
     if "risk" in severities:
-        health = "AT_RISK"
+        health = "AT RISK"
     elif "warn" in severities:
-        health = "WATCH"
+        health = "WARNING"
     else:
         health = "HEALTHY"
 

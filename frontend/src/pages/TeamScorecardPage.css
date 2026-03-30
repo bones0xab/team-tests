@@ -1,0 +1,180 @@
+/* ===== TEAM SCORECARD CSS ===== */
+
+.scorecard-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.scorecard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .scorecard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.scorecard-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.sc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.sc-user {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sc-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border);
+}
+
+.sc-avatar-placeholder {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 1.2rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.sc-name {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.sc-score-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.sc-score {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 2.2rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 0.2rem;
+}
+
+.sc-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.5rem;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+
+.label-excellent { background: rgba(0, 203, 93, 0.1); color: #00CB5D; border: 1px solid #00CB5D; }
+.label-good { background: rgba(0, 114, 188, 0.1); color: #0072BC; border: 1px solid #0072BC; }
+.label-warning { background: rgba(255, 122, 0, 0.1); color: #FF7A00; border: 1px solid #FF7A00; }
+.label-risk { background: rgba(228, 38, 0, 0.1); color: #E42600; border: 1px solid #E42600; }
+
+.sc-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.8rem;
+}
+
+.sc-metric-pill {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+  border-radius: 4rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text2);
+}
+
+.sc-velocity {
+  margin-bottom: 1rem;
+}
+
+.sc-velocity-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.sc-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+  height: 40px;
+}
+
+.sc-bar-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  width: 24px;
+  height: 100%;
+}
+
+.sc-bar {
+  width: 100%;
+  background: var(--blue);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+  transition: height 0.3s ease;
+}
+
+.sc-bar-val {
+  font-size: 0.65rem;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+
+.sc-ai-summary {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.sc-flag {
+  margin-top: 0.5rem;
+  background: rgba(255, 122, 0, 0.05);
+  border-left: 2px solid var(--orange);
+  padding: 0.4rem 0.75rem;
+  color: var(--orange);
+  border-radius: 2px;
+  font-size: 0.8rem;
+}

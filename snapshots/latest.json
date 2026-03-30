@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "snapshot_time_utc": "2026-03-26T03:26:08.049Z",
+  "metrics": {
+    "total": 26,
+    "status_counts": {
+      "in_progress": 10,
+      "done": 8,
+      "todo": 8,
+      "unknown": 0
+    },
+    "wip": 10,
+    "wip_ratio": 0.38461538461538464,
+    "done_ratio": 0.3076923076923077,
+    "stale_in_progress_count": 8,
+    "stale_in_progress_ratio": 0.8,
+    "unassigned_in_progress_count": 2,
+    "assignee_wip": {
+      "afellous": 5,
+      "UNASSIGNED": 2,
+      "aelhajja": 1,
+      "mojellab": 2
+    },
+    "top_assignees": [
+      [
+        "afellous",
+        5
+      ],
+      [
+        "UNASSIGNED",
+        2
+      ],
+      [
+        "mojellab",
+        2
+      ],
+      [
+        "aelhajja",
+        1
+      ]
+    ],
+    "top1_wip_share": 0.5
+  },
+  "rules": {
+    "project_health": "AT RISK",
+    "risks": [
+      "Large share of WIP is stale; indicates blockers or review bottleneck.",
+      "WIP concentration is moderate; dependency risk may be forming."
+    ],
+    "actions": [
+      "Review aging WIP: identify blockers and unblock the oldest items.",
+      "Balance ownership: redistribute one active item or pair to reduce dependency risk."
+    ],
+    "proof": [
+      {
+        "rule": "STALE_WIP_BOTTLENECK",
+        "severity": "risk",
+        "signal": "stale_in_progress_ratio",
+        "value": 0.8,
+        "threshold": 0.3,
+        "why": "Large share of WIP is stale; indicates blockers or review bottleneck."
+      },
+      {
+        "rule": "DEPENDENCY_FORMING",
+        "severity": "warn",
+        "signal": "top1_wip_share",
+        "value": 0.5,
+        "threshold": 0.4,
+        "why": "WIP concentration is moderate; dependency risk may be forming."
+      }
+    ]
+  }
+}
