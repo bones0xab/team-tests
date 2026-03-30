@@ -98,26 +98,37 @@ pipeline {
                             -e ACCESS_TOKEN_EXPIRE_MINUTES=30 \
                             ${BACKEND_IMAGE}:${IMAGE_TAG}
 
-                        sleep 20
+                        sleep 10  # initial wait
 
                         echo "=== CONTAINER STATUS ==="
                         docker ps -a | grep smoke-backend-${BUILD_NUMBER} || true
 
-                        echo "=== CONTAINER LOGS ==="
-                        docker logs smoke-backend-${BUILD_NUMBER} 2>&1 || true
+                        echo "=== CONTAINER LOGS (first 50 lines) ==="
+                        docker logs smoke-backend-${BUILD_NUMBER} --tail=50 2>&1 || true
 
-                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health 2>/dev/null || echo "000")
-                        echo "Health check status: \$STATUS"
+                        echo "=== WAITING FOR HEALTH CHECK ==="
+                        for i in {1..8}; do
+                            STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health 2>/dev/null || echo "000")
+                            echo "Attempt \$i - Health check status: \$STATUS"
+                            if [ "\$STATUS" = "200" ]; then
+                                echo "✅ Backend is healthy!"
+                                break
+                            fi
+                            sleep 5
+                        done
+
+                        echo "=== FINAL CONTAINER LOGS ==="
+                        docker logs smoke-backend-${BUILD_NUMBER} 2>&1 || true
 
                         docker stop smoke-backend-${BUILD_NUMBER} || true
                         docker rm   smoke-backend-${BUILD_NUMBER} || true
 
                         if [ "\$STATUS" != "200" ]; then
-                            echo "Smoke test failed — backend did not respond with 200"
+                            echo "❌ Smoke test failed — backend did not respond with 200 after ~40s"
                             exit 1
                         fi
 
-                        echo "Smoke test passed — backend is healthy"
+                        echo "✅ Smoke test passed — backend is healthy"
                     """
                 }
             }
@@ -153,7 +164,7 @@ EOF
                                 --build \
                                 --remove-orphans
 
-                            sleep 20
+                            sleep 25
 
                             BACKEND_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null)
                             echo "Backend health: \$BACKEND_STATUS"
