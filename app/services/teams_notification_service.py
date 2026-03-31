@@ -1,8 +1,4 @@
 # app/services/teams_notification_service.py
-# ──────────────────────────────────────────────────────────────
-# Upgraded Teams notifications using Adaptive Cards
-# Supports: health alerts, WARNING cards, CRITICAL cards
-# ──────────────────────────────────────────────────────────────
 
 import os
 import requests
@@ -12,22 +8,12 @@ from datetime import datetime
 
 class TeamsNotificationService:
 
-    """
-    Service responsible for sending project health notifications
-    to Microsoft Teams using Incoming Webhook.
-    """
-
     def __init__(self):
         self.webhook_url = os.getenv("TEAMS_WEBHOOK_URL")
-
         if not self.webhook_url:
-            raise ValueError(
-                "TEAMS_WEBHOOK_URL is not set in environment variables."
-            )
-
+            raise ValueError("TEAMS_WEBHOOK_URL is not set in environment variables.")
 
     def _send(self, card: dict) -> bool:
-        """Send an Adaptive Card payload to Teams."""
         if not self.webhook_url or self.webhook_url == "disabled":
             print("[TEAMS] Webhook not configured — skipping notification")
             return False
@@ -39,119 +25,139 @@ class TeamsNotificationService:
             print(f"[TEAMS] Failed to send notification: {e}")
             return False
 
-    # ── Project Health Notification (existing, upgraded) ──────
-    def send_project_health(
-            self,
-            project_name: str,
-            health_status: str,
-            metrics: dict | None = None,
-            rules: dict | None = None,
-            days_back: int = 30,
-        ):
-            """
-            Sends a project health notification to Microsoft Teams.
+    # ── MAIN: Consolidated Portfolio Digest ───────────────────
+    def send_consolidated_digest(self, projects: list[dict]):
+        """
+        Sends ONE executive summary card for all firing projects.
+        projects: list of {project_key, severity, summary, stale, wip_pct, total}
+        """
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-            :param project_name: Name / key of the project
-            :param health_status: Health status (HEALTHY / WATCH / AT_RISK)
-            :param metrics: Computed metrics dict from fetch_dashboard_data
-            :param rules: Rules dict (risks, actions) from fetch_dashboard_data
-            :param days_back: Analysis window in days
-            """
+        critical = [p for p in projects if p.get("severity") == "CRITICAL"]
+        warning  = [p for p in projects if p.get("severity") == "WARNING"]
 
-            color = self._get_color(health_status)
+        total_stale = sum(p.get("stale") or 0 for p in projects)
+        wip_vals    = [p["wip_pct"] for p in projects if p.get("wip_pct") is not None]
+        avg_wip     = round(sum(wip_vals) / len(wip_vals), 1) if wip_vals else 0
 
-            # ── Core identity facts ──────────────────────────────────────────────
-            facts = [
-                {"name": "Project", "value": project_name},
-                {"name": "Health Status", "value": health_status},
-                {"name": "Analysis Window", "value": f"Last {days_back} days"},
+        # Sort critical by stale issues descending for "most critical" list
+        top_critical = sorted(
+            [p for p in critical if p.get("stale") is not None],
+            key=lambda x: x.get("stale", 0),
+            reverse=True
+        )[:5]
+
+        # Header color — red if any critical, orange if only warnings
+        header_color = "attention" if critical else "warning"
+
+        # Build top issues facts
+        top_facts = []
+        for p in top_critical:
+            stale_str = f"{p['stale']} stale" if p.get("stale") else ""
+            wip_str   = f", {p['wip_pct']}% WIP" if p.get("wip_pct") else ""
+            top_facts.append({
+                "title": p["project_key"],
+                "value": f"{stale_str}{wip_str}" or "AT RISK"
+            })
+
+        # If no enriched data, just list project keys
+        if not top_facts:
+            top_facts = [{"title": p["project_key"], "value": "AT RISK"} for p in critical[:5]]
+
+        body = [
+            {
+                "type": "TextBlock",
+                "text": f"🚨 Jira Portfolio Health Report",
+                "weight": "Bolder",
+                "size": "ExtraLarge",
+                "color": header_color,
+            },
+            {
+                "type": "TextBlock",
+                "text": now,
+                "isSubtle": True,
+                "size": "Small",
+                "spacing": "None",
+            },
+            {"type": "Separator"},
+            {
+                "type": "ColumnSet",
+                "columns": [
+                    {
+                        "type": "Column",
+                        "width": "stretch",
+                        "items": [{
+                            "type": "TextBlock",
+                            "text": f"🔴 {len(critical)} AT RISK",
+                            "weight": "Bolder",
+                            "color": "attention",
+                            "size": "Large",
+                        }]
+                    },
+                    {
+                        "type": "Column",
+                        "width": "stretch",
+                        "items": [{
+                            "type": "TextBlock",
+                            "text": f"⚠️ {len(warning)} WARNING",
+                            "weight": "Bolder",
+                            "color": "warning",
+                            "size": "Large",
+                        }]
+                    },
+                    {
+                        "type": "Column",
+                        "width": "stretch",
+                        "items": [{
+                            "type": "TextBlock",
+                            "text": f"📋 {total_stale:,} stale",
+                            "weight": "Bolder",
+                            "size": "Large",
+                        }]
+                    },
+                    {
+                        "type": "Column",
+                        "width": "stretch",
+                        "items": [{
+                            "type": "TextBlock",
+                            "text": f"📊 {avg_wip}% avg WIP",
+                            "weight": "Bolder",
+                            "size": "Large",
+                        }]
+                    },
+                ]
+            },
+        ]
+
+        # Most critical projects section
+        if top_facts:
+            body += [
+                {"type": "Separator"},
                 {
-                    "name": "Timestamp",
-                    "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "type": "TextBlock",
+                    "text": "Most Critical Projects",
+                    "weight": "Bolder",
+                    "size": "Medium",
+                    "spacing": "Medium",
                 },
+                {
+                    "type": "FactSet",
+                    "facts": top_facts,
+                }
             ]
 
-            # ── Metrics block ────────────────────────────────────────────────────
-            if metrics:
-                total = metrics.get("total", 0)
-                done = metrics.get("done", 0)
-                wip = metrics.get("wip", 0)
-                stale = metrics.get("stale_in_progress_count", 0)
-                done_pct = round(metrics.get("done_ratio", 0) * 100, 1)
-                wip_pct = round(metrics.get("wip_ratio", 0) * 100, 1)
+        # All AT RISK list if more than 5
+        if len(critical) > 5:
+            remaining = [p["project_key"] for p in critical[5:]]
+            body.append({
+                "type": "TextBlock",
+                "text": f"Also AT RISK: {', '.join(remaining)}",
+                "isSubtle": True,
+                "size": "Small",
+                "wrap": True,
+                "spacing": "Small",
+            })
 
-                facts += [
-                    {"name": "Total Issues", "value": str(total)},
-                    {"name": "Done", "value": f"{done} ({done_pct}%)"},
-                    {"name": "In Progress (WIP)", "value": f"{wip} ({wip_pct}%)"},
-                    {"name": "Stale Issues", "value": str(stale)},
-                ]
-
-            sections = [{"facts": facts, "markdown": True}]
-
-            # ── Risks block ──────────────────────────────────────────────────────
-            if rules:
-                risks = rules.get("risks") or []
-                actions = rules.get("actions") or []
-
-                if risks:
-                    sections.append({
-                        "title": "⚠️ Risks",
-                        "text": "\n\n".join(f"• {r}" for r in risks),
-                        "markdown": True,
-                    })
-                if actions:
-                    sections.append({
-                        "title": "✅ Recommended Actions",
-                        "text": "\n\n".join(f"• {a}" for a in actions),
-                        "markdown": True,
-                    })
-
-            payload = {
-                "@type": "MessageCard",
-                "@context": "http://schema.org/extensions",
-                "summary": f"{project_name} health status update",
-                "themeColor": color,
-                "title": "📊 Project Health Update",
-                "sections": sections,
-            }
-
-            response = requests.post(
-                self.webhook_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-
-            if response.status_code != 200:
-                raise Exception(
-                    f"Failed to send Teams notification. "
-                    f"Status code: {response.status_code}, "
-                    f"Response: {response.text}"
-                )
-
-    @staticmethod
-    def _get_color(status: str) -> str:
-        """
-        Returns color code based on health status.
-        Matches rules output (HEALTHY / WATCH / AT_RISK) and legacy labels.
-        """
-        s = (status or "").strip().lower()
-
-        if s in ("at_risk", "risk"):
-            return "FF0000"
-        if s in ("watch", "warning"):
-            return "FFA500"
-        if s in ("healthy",):
-            return "00FF00"
-        return "0076D7"
-
-    # ── WARNING Alert (Mode A — manual approval) ──────────────
-    def send_warning_alert(
-        self,
-        project_key: str,
-        summary: str,
-        description: str,
-    ):
         card = {
             "type": "message",
             "attachments": [{
@@ -160,59 +166,57 @@ class TeamsNotificationService:
                     "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
                     "type": "AdaptiveCard",
                     "version": "1.4",
-                    "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": "⚠️ WARNING Alert",
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "color": "warning",
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": "Project",     "value": project_key},
-                                {"title": "Summary",     "value": summary},
-                                {"title": "Description", "value": description},
-                                {"title": "Action",      "value": "Manual approval required"},
-                            ]
-                        }
-                    ],
+                    "body": body,
                     "actions": [
                         {
                             "type": "Action.OpenUrl",
-                            "title": "✅ Create Incident",
-                            "url": f"{os.getenv('APP_URL', 'http://localhost:8000')}/api/incident/create?project={project_key}",
+                            "title": "📈 View Dashboard",
+                            "url": os.getenv("APP_URL", "http://localhost:5173"),
                             "style": "positive",
                         },
                         {
                             "type": "Action.OpenUrl",
-                            "title": "❌ Dismiss",
-                            "url": f"{os.getenv('APP_URL', 'http://localhost:8000')}/api/incident/dismiss?project={project_key}",
-                            "style": "destructive",
-                        }
+                            "title": "📊 View Grafana",
+                            "url": os.getenv("GRAFANA_URL", "http://localhost:3001"),
+                        },
                     ]
                 }
             }]
         }
         self._send(card)
 
-    # ── CRITICAL Alert (Mode B — auto incident created) ───────
-    def send_critical_alert(
-        self,
-        project_key: str,
-        summary: str,
-        description: str,
-        jira_ticket: Optional[str] = None,
-        is_escalation: bool = False,
-    ):
-        title = "🔴 ESCALATION — Still AT RISK after 3 days" if is_escalation else "🔴 CRITICAL — Incident Auto-Created"
-        color = "attention"
+    # ── WARNING Alert (kept for escalation use) ───────────────
+    def send_warning_alert(self, project_key: str, summary: str, description: str):
+        card = {
+            "type": "message",
+            "attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {"type": "TextBlock", "text": "⚠️ WARNING Alert", "weight": "Bolder", "size": "Large", "color": "warning"},
+                        {"type": "FactSet", "facts": [
+                            {"title": "Project",     "value": project_key},
+                            {"title": "Summary",     "value": summary},
+                            {"title": "Description", "value": description},
+                            {"title": "Action",      "value": "Review required within 15 minutes"},
+                        ]}
+                    ],
+                    "actions": [
+                        {"type": "Action.OpenUrl", "title": "✅ Create Incident", "url": f"{os.getenv('APP_URL', 'http://localhost:8000')}/api/incident/create?project={project_key}", "style": "positive"},
+                        {"type": "Action.OpenUrl", "title": "❌ Dismiss", "url": f"{os.getenv('APP_URL', 'http://localhost:8000')}/api/incident/dismiss?project={project_key}", "style": "destructive"},
+                    ]
+                }
+            }]
+        }
+        self._send(card)
 
-        jira_url = (
-            f"{os.getenv('JIRA_BASE_URL', '')}/browse/{jira_ticket}"
-            if jira_ticket else None
-        )
+    # ── CRITICAL Alert (kept for escalation use) ──────────────
+    def send_critical_alert(self, project_key: str, summary: str, description: str, jira_ticket: Optional[str] = None, is_escalation: bool = False):
+        title = "🔴 ESCALATION — Still AT RISK, no action taken" if is_escalation else "🔴 CRITICAL — Incident Auto-Created"
+        jira_url = f"{os.getenv('JIRA_BASE_URL', '')}/browse/{jira_ticket}" if jira_ticket else None
 
         card = {
             "type": "message",
@@ -223,50 +227,29 @@ class TeamsNotificationService:
                     "type": "AdaptiveCard",
                     "version": "1.4",
                     "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": title,
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "color": color,
-                        },
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": "Project",     "value": project_key},
-                                {"title": "Summary",     "value": summary},
-                                {"title": "Description", "value": description},
-                                {"title": "Jira Ticket", "value": jira_ticket or "Not created"},
-                                {"title": "Time",        "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
-                            ]
-                        }
+                        {"type": "TextBlock", "text": title, "weight": "Bolder", "size": "Large", "color": "attention"},
+                        {"type": "FactSet", "facts": [
+                            {"title": "Project",     "value": project_key},
+                            {"title": "Summary",     "value": summary},
+                            {"title": "Description", "value": description},
+                            {"title": "Jira Ticket", "value": jira_ticket or "Not created"},
+                            {"title": "Time",        "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
+                        ]}
                     ],
-                    "actions": ([{
-                        "type": "Action.OpenUrl",
-                        "title": "🎫 View Jira Ticket",
-                        "url": jira_url,
-                    }] if jira_url else [])
+                    "actions": ([{"type": "Action.OpenUrl", "title": "🎫 View Jira Ticket", "url": jira_url}] if jira_url else [])
                 }
             }]
         }
         self._send(card)
 
+    # ── Daily summary (scheduled, kept for 9AM digest) ────────
     def send_daily_summary(self, projects: list[dict]):
-        """
-        Send a daily portfolio summary card to Teams at 9 AM.
-        projects: list of {"project_key": str, "health": str}
-        """
-        at_risk  = [p for p in projects if p["health"] == "AT RISK"]
-        warning  = [p for p in projects if p["health"] == "WARNING"]
-        healthy  = [p for p in projects if p["health"] == "HEALTHY"]
-        unknown  = [p for p in projects if p["health"] not in ("AT RISK", "WARNING", "HEALTHY")]
+        at_risk = [p for p in projects if p["health"] == "AT RISK"]
+        warning = [p for p in projects if p["health"] == "WARNING"]
+        healthy = [p for p in projects if p["health"] == "HEALTHY"]
 
         def fmt(items):
-            if not items:
-                return "None"
-            return ", ".join(p["project_key"] for p in items)
-
-        today = datetime.utcnow().strftime("%B %d, %Y")
+            return ", ".join(p["project_key"] for p in items) if items else "None"
 
         card = {
             "type": "message",
@@ -277,42 +260,53 @@ class TeamsNotificationService:
                     "type": "AdaptiveCard",
                     "version": "1.4",
                     "body": [
-                        {
-                            "type": "TextBlock",
-                            "text": f"📊 Daily Project Health Summary — {today}",
-                            "weight": "Bolder",
-                            "size": "Large",
-                            "color": "accent",
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": f"Portfolio overview across {len(projects)} active projects.",
-                            "isSubtle": True,
-                            "spacing": "Small",
-                        },
+                        {"type": "TextBlock", "text": f"📊 Daily Project Health Summary — {datetime.utcnow().strftime('%B %d, %Y')}", "weight": "Bolder", "size": "Large", "color": "accent"},
+                        {"type": "TextBlock", "text": f"Portfolio overview across {len(projects)} active projects.", "isSubtle": True, "spacing": "Small"},
                         {"type": "Separator"},
-                        {
-                            "type": "FactSet",
-                            "facts": [
-                                {"title": f"🔴 AT RISK ({len(at_risk)})",  "value": fmt(at_risk)},
-                                {"title": f"⚠️ WARNING ({len(warning)})",  "value": fmt(warning)},
-                                {"title": f"✅ HEALTHY ({len(healthy)})",   "value": fmt(healthy)},
-                            ]
-                        },
-                        {
-                            "type": "TextBlock",
-                            "text": f"Generated at 09:00 AM — Africa/Casablanca",
-                            "isSubtle": True,
-                            "size": "Small",
-                            "spacing": "Medium",
-                        }
+                        {"type": "FactSet", "facts": [
+                            {"title": f"🔴 AT RISK ({len(at_risk)})",  "value": fmt(at_risk)},
+                            {"title": f"⚠️ WARNING ({len(warning)})",  "value": fmt(warning)},
+                            {"title": f"✅ HEALTHY ({len(healthy)})",   "value": fmt(healthy)},
+                        ]},
                     ],
-                    "actions": [{
-                        "type": "Action.OpenUrl",
-                        "title": "📈 Open Dashboard",
-                        "url": os.getenv("APP_URL", "http://localhost:5173"),
-                    }]
+                    "actions": [{"type": "Action.OpenUrl", "title": "📈 Open Dashboard", "url": os.getenv("APP_URL", "http://localhost:5173")}]
                 }
             }]
         }
         self._send(card)
+
+    # ── Project health (kept for manual sends) ────────────────
+    def send_project_health(self, project_name: str, health_status: str, metrics: dict | None = None, rules: dict | None = None, days_back: int = 30):
+        color = self._get_color(health_status)
+        facts = [
+            {"name": "Project",          "value": project_name},
+            {"name": "Health Status",    "value": health_status},
+            {"name": "Analysis Window",  "value": f"Last {days_back} days"},
+            {"name": "Timestamp",        "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")},
+        ]
+        if metrics:
+            facts += [
+                {"name": "Total Issues",      "value": str(metrics.get("total", 0))},
+                {"name": "Done",              "value": f"{metrics.get('done', 0)} ({round(metrics.get('done_ratio', 0)*100,1)}%)"},
+                {"name": "In Progress (WIP)", "value": f"{metrics.get('wip', 0)} ({round(metrics.get('wip_ratio', 0)*100,1)}%)"},
+                {"name": "Stale Issues",      "value": str(metrics.get("stale_in_progress_count", 0))},
+            ]
+        sections = [{"facts": facts, "markdown": True}]
+        if rules:
+            if rules.get("risks"):
+                sections.append({"title": "⚠️ Risks", "text": "\n\n".join(f"• {r}" for r in rules["risks"]), "markdown": True})
+            if rules.get("actions"):
+                sections.append({"title": "✅ Recommended Actions", "text": "\n\n".join(f"• {a}" for a in rules["actions"]), "markdown": True})
+        payload = {"@type": "MessageCard", "@context": "http://schema.org/extensions", "summary": f"{project_name} health status update", "themeColor": color, "title": "📊 Project Health Update", "sections": sections}
+        try:
+            requests.post(self.webhook_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+        except Exception as e:
+            print(f"[TEAMS] send_project_health failed: {e}")
+
+    @staticmethod
+    def _get_color(status: str) -> str:
+        s = (status or "").strip().lower()
+        if s in ("at_risk", "risk", "at risk"): return "FF0000"
+        if s in ("watch", "warning"):           return "FFA500"
+        if s in ("healthy",):                   return "00FF00"
+        return "0076D7"

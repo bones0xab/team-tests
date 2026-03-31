@@ -1,48 +1,19 @@
 # alertmanager/alertmanager.yml
-# ──────────────────────────────────────────────────────────────
-# Place in: alertmanager/alertmanager.yml
-# ──────────────────────────────────────────────────────────────
+# Sends ONE consolidated digest per 6 hours — no per-project spam
 
 global:
   resolve_timeout: 5m
 
-# ── Routing tree ───────────────────────────────────────────────
 route:
-  group_by: ["project_key", "severity"]   # group alerts by project
-  group_wait:      30s    # wait 30s to collect alerts before sending
-  group_interval:  5m     # wait 5m before sending new alerts for same group
-  repeat_interval: 1h     # repeat alert every 1h if still firing
+  receiver: fastapi-webhook
+  group_by: ['alertname']        # group ALL alerts regardless of project
+  group_wait: 60s                # wait 60s to collect all alerts before sending
+  group_interval: 6h             # only re-notify every 6 hours
+  repeat_interval: 24h           # if still firing, resend after 24h max
 
-  receiver: "fastapi-webhook"
-
-  routes:
-    # CRITICAL — send immediately, repeat every 30min
-    - matchers:
-        - severity="CRITICAL"
-      receiver: "fastapi-webhook"
-      group_wait:      10s
-      repeat_interval: 30m
-      continue: true
-
-    # WARNING — send after 1min, repeat every 1h
-    - matchers:
-        - severity="WARNING"
-      receiver: "fastapi-webhook"
-      group_wait:      1m
-      repeat_interval: 1h
-
-# ── Receivers ─────────────────────────────────────────────────
 receivers:
-  - name: "fastapi-webhook"
+  - name: fastapi-webhook
     webhook_configs:
-      - url: "http://backend:8000/api/webhook/alert"
-        send_resolved: true    # notify when alert resolves too
-
-# ── Inhibition rules ──────────────────────────────────────────
-# Suppress WARNING if CRITICAL already firing for same project
-inhibit_rules:
-  - source_matchers:
-      - severity="CRITICAL"
-    target_matchers:
-      - severity="WARNING"
-    equal: ["project_key"]
+      - url: http://backend:8000/api/webhook/alert
+        send_resolved: true
+        max_alerts: 0            # 0 = send all alerts in one payload
