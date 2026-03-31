@@ -99,11 +99,6 @@ async def dashboard(
     except Exception as exc:
         print(f"[METRICS] Failed to update Prometheus for {project_key}: {exc}")
 
-    try:
-        notifier = TeamsNotificationService()
-        notifier.send_project_health(project_key, project_health)
-    except Exception as exc:
-        print(f"Notification error: {exc}")
 
     chart_data = {
         "labels": list(metrics["status_counts"].keys()),
