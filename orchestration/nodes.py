@@ -1,7 +1,7 @@
 import json
 import os
 from typing import TypedDict, Dict, List, Any
-from pydantic import BaseModel, SecretStr
+from groq import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-class ProjectState(TypedDict):
+class ProjectState(TypedDict, total=False):
     issues: List[Dict[str, Any]]
     metrics: Dict[str, Any]
     rules: Dict[str, Any]
@@ -43,7 +43,7 @@ class LLMInsight(BaseModel):
 def llm_insight_node(state: ProjectState):
     llm = ChatGroq(
         model="llama-3.1-8b-instant",
-        api_key=SecretStr(os.environ["groq_API"]),
+        api_key=os.getenv("groq_API"),
         temperature=0
     )
 
@@ -59,13 +59,12 @@ def llm_insight_node(state: ProjectState):
 
     chain = prompt | structured_llm
 
-    result: LLMInsight = chain.invoke({  # type: ignore
+    result = chain.invoke({
         "metrics": state["metrics"],
         "rules": state["rules"]
     })
 
     insight_dict = result.model_dump()
-
     from services.WebSocketManager import manager
     manager.broadcast_sync({"type": "AI_UPDATE", "data": insight_dict}, "global")
 

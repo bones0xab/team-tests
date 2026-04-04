@@ -1,82 +1,174 @@
-# app/services/throttle_service.py
+from __future__ import annotations
 
+import logging
 import os
 import time
-from typing import Optional, Any
+from typing import Dict, Optional, Tuple, cast
 
-_USE_REDIS = False
-_redis_client: Any = None
-_fallback_throttle: dict[str, float] = {}
-_fallback_escalation: dict[str, str] = {}
+import redis
 
-# Try to connect to Redis — if unavailable, fall back to in-memory
-def _connect_redis(retries: int = 5, delay: float = 2.0):
-    global _USE_REDIS, _redis_client
-    try:
-        from redis import Redis  # type: ignore[import-untyped]
-        for attempt in range(retries):
-            try:
-                _client = Redis(
-                    host=os.getenv("REDIS_HOST", "redis"),
-                    port=int(os.getenv("REDIS_PORT", "6379")),
-                    db=0,
-                    decode_responses=True,
-                    socket_connect_timeout=2,
-                )
-                _client.ping()
-                _redis_client = _client
-                _USE_REDIS = True
-                print("[THROTTLE] Using Redis for throttling")
-                return
-            except Exception as e:
-                print(f"[THROTTLE] Redis attempt {attempt + 1}/{retries} failed: {e}")
-                if attempt < retries - 1:
-                    time.sleep(delay)
-        print("[THROTTLE] Redis unavailable — using in-memory fallback")
-    except ImportError:
-        print("[THROTTLE] Redis package not installed — using in-memory fallback")
+from app.services.redis_typing import RedisStrClient
 
-_connect_redis()
+logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Client Redis global — partagé par ThrottleService et EscalationService
+# Importé dans webhook.py : from app.services.throttle_service import _redis_client, _USE_REDIS
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REDIS_HOST: str = os.getenv("REDIS_HOST", "redis")
+_REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+
+_redis_client: Optional[RedisStrClient] = None   # type annoté avec le Protocol
+_USE_REDIS:    bool = False
+
+try:
+    _raw_client = redis.Redis(
+        host=_REDIS_HOST,
+        port=_REDIS_PORT,
+        decode_responses=True,        # runtime → retourne str, jamais bytes
+        socket_connect_timeout=3,
+        socket_timeout=3,
+    )
+    _raw_client.ping()
+    # cast() dit à Pyright : "ce client suit le Protocol RedisStrClient"
+    # Sans cast, Pyright voit redis.Redis (ResponseT=Unknown) → Awaitable[Unknown]
+    _redis_client = cast(RedisStrClient, _raw_client)
+    _USE_REDIS    = True
+    logger.info("✅ throttle_service — Redis disponible (%s:%s)", _REDIS_HOST, _REDIS_PORT)
+except Exception as exc:
+    _redis_client = None
+    _USE_REDIS    = False
+    logger.warning("⚠️  throttle_service — Redis indisponible, mode mémoire : %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ThrottleService — empêche les doublons de notification
+# ─────────────────────────────────────────────────────────────────────────────
 
 class ThrottleService:
+    """
+    Gère le throttle de notifications via Redis (ou dict mémoire si Redis absent).
 
-    def is_throttled(self, key: str, seconds: int) -> bool:
-        if _USE_REDIS and _redis_client is not None:
-            return bool(_redis_client.exists(f"throttle:{key}"))
-        last = _fallback_throttle.get(key, 0.0)
-        return (time.time() - last) < seconds
+    Clés Redis visibles dans ton MONITOR :
+      throttle:{project_key}:{alert_type}:{level}
+      throttle:portfolio:digest
+    """
 
-    def mark(self, key: str, seconds: int) -> None:
-        if _USE_REDIS and _redis_client is not None:
-            _redis_client.setex(f"throttle:{key}", seconds, "1")
-        else:
-            _fallback_throttle[key] = time.time()
+    def __init__(self) -> None:
+        # RedisStrClient (Protocol) — Pyright connaît tous les types de retour
+        self._redis:     Optional[RedisStrClient] = _redis_client
+        self._use_redis: bool                     = _USE_REDIS
+        self._mem:       Dict[str, float]          = {}   # fallback mémoire
+
+    def is_throttled(self, key: str, seconds: int = 3600) -> bool:
+        """True si la clé est encore dans sa fenêtre de throttle."""
+        full_key = f"throttle:{key}"
+        if self._use_redis and self._redis is not None:
+            try:
+                exists: int = self._redis.exists(full_key)   # int ✅ (Protocol)
+                return bool(exists)
+            except redis.RedisError as exc:
+                logger.error("ThrottleService.is_throttled [%s]: %s", full_key, exc)
+                return False
+        return time.monotonic() < self._mem.get(full_key, 0.0)
+
+    def mark(self, key: str, seconds: int = 3600) -> None:
+        """Pose le throttle pour `seconds` secondes (SET NX EX)."""
+        full_key = f"throttle:{key}"
+        if self._use_redis and self._redis is not None:
+            try:
+                self._redis.set(full_key, "1", ex=seconds, nx=True)
+            except redis.RedisError as exc:
+                logger.error("ThrottleService.mark [%s]: %s", full_key, exc)
+            return
+        self._mem[full_key] = time.monotonic() + seconds
 
     def clear(self, key: str) -> None:
-        if _USE_REDIS and _redis_client is not None:
-            _redis_client.delete(f"throttle:{key}")
-        else:
-            _fallback_throttle.pop(key, None)
+        """Supprime le throttle (permet un re-envoi immédiat)."""
+        full_key = f"throttle:{key}"
+        if self._use_redis and self._redis is not None:
+            try:
+                self._redis.delete(full_key)
+            except redis.RedisError as exc:
+                logger.error("ThrottleService.clear [%s]: %s", full_key, exc)
+            return
+        self._mem.pop(full_key, None)
 
+    def get_ttl(self, key: str) -> int:
+        """TTL restant en secondes. -1=persistant, -2=absent."""
+        full_key = f"throttle:{key}"
+        if self._use_redis and self._redis is not None:
+            try:
+                ttl: int = self._redis.ttl(full_key)   # int ✅ (Protocol)
+                return ttl
+            except redis.RedisError:
+                return -2
+        remaining = int(self._mem.get(full_key, 0.0) - time.monotonic())
+        return max(remaining, -2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EscalationService — gère l'état d'escalade avec cache local anti-spam Redis
+# ─────────────────────────────────────────────────────────────────────────────
 
 class EscalationService:
+    """
+    Clés Redis :  escalation:{project_key} → "pending"
 
-    def set_pending(self, project_key: str, alert_id: int, timeout_seconds: int = 900) -> None:
-        if _USE_REDIS and _redis_client is not None:
-            _redis_client.setex(f"escalation:{project_key}", timeout_seconds, str(alert_id))
-        else:
-            _fallback_escalation[project_key] = str(alert_id)
+    CACHE LOCAL 10s : évite les centaines de GET/s visibles dans ton MONITOR.
+    """
 
-    def get_pending(self, project_key: str) -> Optional[str]:
-        if _USE_REDIS and _redis_client is not None:
-            return _redis_client.get(f"escalation:{project_key}")
-        return _fallback_escalation.get(project_key)
+    ESCALATION_TTL_SECONDS: int  = 3600
+    _LOCAL_CACHE_TTL:       float = 10.0
 
-    def clear_pending(self, project_key: str) -> None:
-        if _USE_REDIS and _redis_client is not None:
-            _redis_client.delete(f"escalation:{project_key}")
-        else:
-            _fallback_escalation.pop(project_key, None)
+    def __init__(self) -> None:
+        self._redis:     Optional[RedisStrClient]                    = _redis_client
+        self._use_redis: bool                                        = _USE_REDIS
+        self._cache:     Dict[str, Tuple[Optional[str], float]] = {}
 
     def is_pending(self, project_key: str) -> bool:
-        return self.get_pending(project_key) is not None
+        """Vérifie si une escalade est en attente (cache local 10s)."""
+        now = time.monotonic()
+        cached_val, cached_at = self._cache.get(project_key, (None, 0.0))
+
+        if now - cached_at < self._LOCAL_CACHE_TTL:
+            return cached_val == "pending"   # cache encore valide → pas de Redis
+
+        if not self._use_redis or self._redis is None:
+            return False
+
+        try:
+            val: Optional[str] = self._redis.get(f"escalation:{project_key}")  # str|None ✅
+        except redis.RedisError as exc:
+            logger.error("EscalationService.is_pending [%s]: %s", project_key, exc)
+            return False
+
+        self._cache[project_key] = (val, now)
+        return val == "pending"
+
+    def set_pending(self, project_key: str, ttl_seconds: Optional[int] = None) -> None:
+        """Marque le projet comme 'escalade en attente'."""
+        ttl = ttl_seconds or self.ESCALATION_TTL_SECONDS
+        if self._use_redis and self._redis is not None:
+            try:
+                self._redis.set(f"escalation:{project_key}", "pending", ex=ttl)
+            except redis.RedisError as exc:
+                logger.error("EscalationService.set_pending [%s]: %s", project_key, exc)
+        self._cache[project_key] = ("pending", time.monotonic())
+
+    def clear_pending(self, project_key: str) -> None:
+        """Efface l'état d'escalade après traitement."""
+        if self._use_redis and self._redis is not None:
+            try:
+                self._redis.delete(f"escalation:{project_key}")
+            except redis.RedisError as exc:
+                logger.error("EscalationService.clear_pending [%s]: %s", project_key, exc)
+        self._cache[project_key] = (None, time.monotonic())
+
+    def invalidate_cache(self, project_key: Optional[str] = None) -> None:
+        """Invalide le cache local (tout ou un projet)."""
+        if project_key is None:
+            self._cache.clear()
+        else:
+            self._cache.pop(project_key, None)

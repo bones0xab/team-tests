@@ -152,41 +152,20 @@ async def portfolio(
         ) from exc
 
 
+# Remove this entire endpoint, or replace send_project_health with:
 @router.post("/api/alerts/send")
 async def send_alert(
     project_key: str = Query(...),
-    _user=Depends(require_permission("dashboard:view")),
+    _user=Depends(require_permission("alerts:send")),   # tighten permission
 ):
-    try:
-        data = fetch_dashboard_data(project_key, days_back=30)
-    except requests.HTTPError as exc:
-        raise _jira_error(exc, "Failed to fetch project data from Jira.") from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Failed to compute project data.",
-        ) from exc
-
+    # Don't call send_project_health() — that's the spam path
+    # Just return the health status for manual inspection
+    data = fetch_dashboard_data(project_key, days_back=30)
     if not data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No data found for project '{project_key}'.",
-        )
-
-    health = data["rules"]["project_health"]
-
-    try:
-        notifier = TeamsNotificationService()
-        notifier.send_project_health(
-            project_key, health,
-            metrics=data.get("metrics"),
-            rules=data.get("rules"),
-            days_back=30,
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to send Teams notification: {exc}",
-        ) from exc
-
-    return {"status": "sent", "project_key": project_key, "health": health}
+        raise HTTPException(status_code=404, detail=f"No data for '{project_key}'.")
+    return {
+        "status": "read_only",
+        "project_key": project_key,
+        "health": data["rules"]["project_health"],
+        "message": "Notifications are handled by Alertmanager pipeline only."
+    }

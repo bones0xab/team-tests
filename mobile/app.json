@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "AI Project Intelligence",
+    "slug": "ai-project-intelligence",
+    "version": "1.0.0",
+    "scheme": "myapp",
+    "platforms": ["ios", "android"]
+  }
+}

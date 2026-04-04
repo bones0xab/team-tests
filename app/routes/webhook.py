@@ -1,30 +1,38 @@
-# app/routes/webhook.py
-# Receives ONE batched payload from Alertmanager and sends a single consolidated digest
+from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
 from app.db.models_alerts import AlertHistory
-from app.services.teams_notification_service import TeamsNotificationService
+from app.db.session import get_db
 from app.services.incident_service import IncidentService
-from app.services.throttle_service import ThrottleService, EscalationService
+from app.services.teams_notification_service import TeamsNotificationService
+from app.services.throttle_service import (
+    EscalationService,
+    ThrottleService,
+    _USE_REDIS,
+    _redis_client,         # type: RedisStrClient | None  ✅
+)
 
 router = APIRouter(prefix="/api/webhook", tags=["Webhooks"])
 
 throttle   = ThrottleService()
 escalation = EscalationService()
 
-DIGEST_THROTTLE_SECONDS = 21600   # 6 hours — one digest per cycle max
-RECALL_AFTER_SECONDS    = 86400   # re-alert if still critical and unacked after 24h
+DIGEST_THROTTLE_SECONDS = 21600
+RECALL_AFTER_SECONDS    = 86400
+ACCUMULATE_WINDOW       = 120
 
 
-# ── Payload schemas ────────────────────────────────────────────
+# ── Schémas ───────────────────────────────────────────────────────────────────
+
 class GrafanaAlert(BaseModel):
     status:       str
     labels:       dict
@@ -41,7 +49,8 @@ class WebhookPayload(BaseModel):
     commonLabels: Optional[dict] = {}
 
 
-# ── Main webhook — consolidated digest ────────────────────────
+# ── Endpoint principal ────────────────────────────────────────────────────────
+
 @router.post("/alert")
 async def receive_alert(
     payload: WebhookPayload,
@@ -53,20 +62,21 @@ async def receive_alert(
     firing_alerts   = [a for a in payload.alerts if a.status == "firing"]
     resolved_alerts = [a for a in payload.alerts if a.status == "resolved"]
 
-    # ── Handle resolved alerts ─────────────────────────────────
+    # ── Résolution ────────────────────────────────────────────────────────────
     for alert in resolved_alerts:
         project_key = str(alert.labels.get("project_key", "UNKNOWN"))
         severity    = str(alert.labels.get("severity", "WARNING")).upper()
         _handle_resolved(db, project_key, severity)
-        throttle.clear(f"{project_key}:{severity}")
+        throttle.clear(f"{project_key}:{severity}:ticket")
         escalation.clear_pending(project_key)
         print(f"[WEBHOOK] Resolved {severity} | {project_key}")
 
     if not firing_alerts:
         return JSONResponse(content={"processed": len(resolved_alerts), "action": "resolved_only"})
 
-    # ── Deduplicate: save all firing alerts to DB ──────────────
-    saved_projects = []
+    # ── Sauvegarde + tickets Jira ─────────────────────────────────────────────
+    saved_projects: List[dict] = []
+
     for alert in firing_alerts:
         project_key = str(alert.labels.get("project_key", "UNKNOWN"))
         severity    = str(alert.labels.get("severity", "WARNING")).upper()
@@ -74,12 +84,12 @@ async def receive_alert(
         description = str(alert.annotations.get("description", ""))
 
         record = AlertHistory(
-            project_key = project_key,
-            severity    = severity,
-            status      = "firing",
-            summary     = summary,
-            description = description,
-            fired_at    = datetime.utcnow(),
+            project_key=project_key,
+            severity=severity,
+            status="firing",
+            summary=summary,
+            description=description,
+            fired_at=datetime.utcnow(),
         )
         db.add(record)
         db.flush()
@@ -92,7 +102,6 @@ async def receive_alert(
             "alert_id":    int(record.id),
         })
 
-        # Auto-create Jira ticket for CRITICAL if not throttled
         if severity == "CRITICAL":
             throttle_key = f"{project_key}:CRITICAL:ticket"
             unacked_old = (
@@ -101,7 +110,7 @@ async def receive_alert(
                     AlertHistory.project_key  == project_key,
                     AlertHistory.severity     == "CRITICAL",
                     AlertHistory.status       == "firing",
-                    AlertHistory.acknowledged == False,
+                    AlertHistory.acknowledged == False,  # noqa: E712
                     AlertHistory.fired_at     <= datetime.utcnow() - timedelta(seconds=RECALL_AFTER_SECONDS),
                 )
                 .first()
@@ -112,25 +121,44 @@ async def receive_alert(
             if not throttle.is_throttled(throttle_key, seconds=RECALL_AFTER_SECONDS):
                 throttle.mark(throttle_key, seconds=RECALL_AFTER_SECONDS)
                 jira_ticket = incident.create_incident(
-                    project_key = project_key,
-                    summary     = f"[AUTO-INCIDENT] {summary}",
-                    description = description,
-                    severity    = severity,
+                    project_key=project_key,
+                    summary=f"[AUTO-INCIDENT] {summary}",
+                    description=description,
+                    severity=severity,
                 )
                 record.jira_ticket    = jira_ticket
                 record.teams_notified = True
-                print(f"[WEBHOOK] Created Jira ticket {jira_ticket} for {project_key}")
+                print(f"[WEBHOOK] Ticket Jira créé : {jira_ticket} pour {project_key}")
 
     db.commit()
 
-    # ── Send ONE consolidated Teams digest ─────────────────────
+    # ── Accumulation Redis ────────────────────────────────────────────────────
+    acc_key = "digest:accumulator"
+    merged: dict
+
+    if _USE_REDIS and _redis_client is not None:
+        # _redis_client est RedisStrClient → .get() retourne Optional[str] ✅
+        existing_raw: Optional[str] = _redis_client.get(acc_key)
+        existing: list = json.loads(existing_raw) if existing_raw else []
+        merged = {p["project_key"]: p for p in existing}
+        for p in saved_projects:
+            merged[p["project_key"]] = p
+        # .setex() retourne bool ✅
+        _redis_client.setex(acc_key, ACCUMULATE_WINDOW + 30, json.dumps(list(merged.values())))
+        print(f"[WEBHOOK] Accumulateur → {len(merged)} projets")
+    else:
+        merged = {p["project_key"]: p for p in saved_projects}
+        print(f"[WEBHOOK] Sans Redis — {len(merged)} projets directs")
+
+    # ── Envoi digest ──────────────────────────────────────────────────────────
     digest_key = "portfolio:digest"
+
     unacked_critical_old = (
         db.query(AlertHistory)
         .filter(
             AlertHistory.severity     == "CRITICAL",
             AlertHistory.status       == "firing",
-            AlertHistory.acknowledged == False,
+            AlertHistory.acknowledged == False,  # noqa: E712
             AlertHistory.fired_at     <= datetime.utcnow() - timedelta(seconds=RECALL_AFTER_SECONDS),
         )
         .first()
@@ -140,71 +168,87 @@ async def receive_alert(
 
     if not throttle.is_throttled(digest_key, seconds=DIGEST_THROTTLE_SECONDS):
         throttle.mark(digest_key, seconds=DIGEST_THROTTLE_SECONDS)
+        print(f"[WEBHOOK] Digest planifié — envoi dans {ACCUMULATE_WINDOW}s")
 
-        # Enrich with latest metrics from Prometheus cache if available
-        enriched = _enrich_with_metrics(saved_projects)
-        notifier.send_consolidated_digest(enriched)
-        print(f"[WEBHOOK] Sent consolidated digest — {len(saved_projects)} projects")
+        async def delayed_send() -> None:
+            await asyncio.sleep(ACCUMULATE_WINDOW)
+            try:
+                if _USE_REDIS and _redis_client is not None:
+                    # Optional[str] ✅ — pas d'Awaitable
+                    final_raw: Optional[str] = _redis_client.get(acc_key)
+                    final_projects: list = (
+                        json.loads(final_raw) if final_raw else list(merged.values())
+                    )
+                    _redis_client.delete(acc_key)
+                else:
+                    final_projects = list(merged.values())
+                enriched = _enrich_with_metrics(final_projects)
+                notifier.send_consolidated_digest(enriched)
+                print(f"[WEBHOOK] Digest envoyé — {len(final_projects)} projets")
+            except Exception as exc:
+                print(f"[WEBHOOK] Erreur envoi digest : {exc}")
+
+        asyncio.create_task(delayed_send())
     else:
-        print(f"[WEBHOOK] Digest throttled — already sent within last 6h")
+        ttl_remaining = throttle.get_ttl(digest_key)
+        print(f"[WEBHOOK] Digest throttlé — prochain dans ~{ttl_remaining}s")
 
     return JSONResponse(content={
-        "processed": len(saved_projects),
-        "action": "consolidated_digest",
-        "projects": [p["project_key"] for p in saved_projects],
+        "processed":   len(saved_projects),
+        "action":      "consolidated_digest",
+        "projects":    [p["project_key"] for p in saved_projects],
+        "accumulated": len(merged),
     })
 
 
+# ── Enrichissement métriques ──────────────────────────────────────────────────
+
 def _enrich_with_metrics(projects: list) -> list:
-    """Try to add stale/wip data from backend cache for richer digest."""
     try:
-        from app.services.services import _DASHBOARD_CACHE
         import time
+        from app.services.services import _DASHBOARD_CACHE
         now = time.time()
         for p in projects:
-            key = (p["project_key"], 30)
-            cached = _DASHBOARD_CACHE.get(key)
+            cached = _DASHBOARD_CACHE.get((p["project_key"], 30))
             if cached and cached["expires_at"] > now:
-                m = cached["payload"].get("metrics", {})
+                m            = cached["payload"].get("metrics", {})
                 p["stale"]   = m.get("stale_in_progress_count", 0)
                 p["wip_pct"] = round(m.get("wip_ratio", 0) * 100, 1)
                 p["total"]   = m.get("total", 0)
             else:
-                p["stale"]   = None
-                p["wip_pct"] = None
-                p["total"]   = None
-    except Exception as e:
-        print(f"[WEBHOOK] Metrics enrichment failed: {e}")
+                p["stale"] = p["wip_pct"] = p["total"] = None
+    except Exception as exc:
+        print(f"[WEBHOOK] Enrichissement métriques échoué : {exc}")
     return projects
 
 
-# ── Acknowledge ────────────────────────────────────────────────
+# ── Acknowledge ───────────────────────────────────────────────────────────────
+
 @router.post("/acknowledge/{alert_id}")
 async def acknowledge_alert(
-    alert_id: int,
+    alert_id:        int,
     acknowledged_by: str = "engineer",
-    db: Session = Depends(get_db),
+    db:              Session = Depends(get_db),
 ):
     record = db.query(AlertHistory).filter(AlertHistory.id == alert_id).first()
     if not record:
         return JSONResponse(status_code=404, content={"error": "Alert not found"})
-
     record.acknowledged    = True
     record.acknowledged_by = acknowledged_by
     record.acknowledged_at = datetime.utcnow()
     db.commit()
-
     escalation.clear_pending(str(record.project_key))
-    print(f"[WEBHOOK] Alert {alert_id} acknowledged by {acknowledged_by}")
+    print(f"[WEBHOOK] Alert {alert_id} acquittée par {acknowledged_by}")
     return {"message": f"Alert {alert_id} acknowledged", "project": record.project_key}
 
 
-# ── Alert history ──────────────────────────────────────────────
+# ── Historique ────────────────────────────────────────────────────────────────
+
 @router.get("/history")
 async def alert_history(
     project_key: Optional[str] = None,
-    limit: int = 50,
-    db: Session = Depends(get_db),
+    limit:       int = 50,
+    db:          Session = Depends(get_db),
 ):
     query = db.query(AlertHistory).order_by(AlertHistory.fired_at.desc())
     if project_key:
@@ -213,8 +257,9 @@ async def alert_history(
     return {"alerts": [r.to_dict() for r in records], "total": len(records)}
 
 
-# ── Helper ─────────────────────────────────────────────────────
-def _handle_resolved(db: Session, project_key: str, severity: str):
+# ── Helper ────────────────────────────────────────────────────────────────────
+
+def _handle_resolved(db: Session, project_key: str, severity: str) -> None:
     record = (
         db.query(AlertHistory)
         .filter(
@@ -229,4 +274,4 @@ def _handle_resolved(db: Session, project_key: str, severity: str):
         record.status      = "resolved"
         record.resolved_at = datetime.utcnow()
         db.commit()
-        print(f"[WEBHOOK] Resolved alert for {project_key} ({severity})")
+        print(f"[WEBHOOK] Résolu — {project_key} ({severity})")
