@@ -83,6 +83,21 @@ class ThrottleService:
                 logger.error("ThrottleService.mark [%s]: %s", full_key, exc)
             return
         self._mem[full_key] = time.monotonic() + seconds
+        
+    def is_throttled_or_mark(self, key: str, seconds: int = 3600) -> bool:
+        full_key = f"throttle:{key}"
+        if self._use_redis and self._redis is not None:
+            try:
+                result = self._redis.set(full_key, "1", ex=seconds, nx=True)
+                return result is None   # None = key existed = already throttled
+            except Exception as exc:
+                logger.error("ThrottleService.is_throttled_or_mark [%s]: %s", full_key, exc)
+                return False
+        now = time.monotonic()
+        if now < self._mem.get(full_key, 0.0):
+            return True
+        self._mem[full_key] = now + seconds
+        return False
 
     def clear(self, key: str) -> None:
         """Supprime le throttle (permet un re-envoi immédiat)."""

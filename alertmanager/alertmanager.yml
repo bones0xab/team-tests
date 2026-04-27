@@ -15,5 +15,5 @@ receivers:
   - name: fastapi-webhook
     webhook_configs:
       - url: http://backend:8000/api/webhook/alert
-        send_resolved: false
+        send_resolved: true
         max_alerts: 0            # 0 = send all alerts in one payload

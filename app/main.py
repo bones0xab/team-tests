@@ -39,8 +39,7 @@ async def escalation_checker() -> None:
     Auto-escalade les alertes WARNING non acquittées depuis > 15 min.
     """
     esc      = EscalationService()
-    notifier = TeamsNotificationService()
-
+    notifier: TeamsNotificationService = TeamsNotificationService()
     while True:
         await asyncio.sleep(120)
         db = None

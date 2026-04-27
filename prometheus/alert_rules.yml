@@ -9,7 +9,7 @@ groups:
       # CRITICAL — project is AT_RISK
       - alert: ProjectAtRisk
         expr: jira_project_health >= 2
-        for: 1m
+        for: 5m
         labels:
           severity: CRITICAL
         annotations:
@@ -38,10 +38,20 @@ groups:
 
       # WARNING — high WIP ratio
       - alert: HighWipRatio
-        expr: jira_issues_wip / jira_issues_total > 0.7
+        expr: jira_issues_wip / jira_issues_total > 0.40  
         for: 5m
         labels:
           severity: WARNING
         annotations:
-          summary: "{{ $labels.project_key }} WIP ratio > 70%"
+          summary: "{{ $labels.project_key }} WIP ratio > 40%"
           description: "Too many issues in progress relative to total."
+
+      # Add this new rule for critical WIP
+      - alert: CriticalWipRatio
+        expr: jira_issues_wip / jira_issues_total > 0.70
+        for: 5m
+        labels:
+          severity: CRITICAL
+        annotations:
+          summary: "{{ $labels.project_key }} WIP ratio > 70% — critical"
+          description: "Severe WIP concentration detected."

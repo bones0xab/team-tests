@@ -1,24 +1,26 @@
 # services/Fetch.py
+import requests
 import time
 import concurrent.futures
-from typing import Iterator, List, Dict
+from typing import Iterator, List, Dict, Optional
 import logging
 import asyncio
 import json
+
 
 import httpx
 import redis.asyncio as redis
 import redis as sync_redis_lib
 import hashlib
 import os
-
-from services.Auth import build_jira_session, load_jira_config, build_async_jira_client
+from requests import Session as RequestsSession
+from services.Auth import JiraConfig, build_jira_session, load_jira_config, build_async_jira_client
 
 logger = logging.getLogger(__name__)
 
 # ── Singleton session & config (Legacy Sync) ──────────────────────────────
-_SESSION = None
-_CONFIG = None
+_SESSION: Optional[RequestsSession] = None
+_CONFIG:  Optional[JiraConfig]      = None
 _SYNC_REDIS_CLIENT = None
 
 def _get_sync_redis():
@@ -34,6 +36,7 @@ def _get_session():
     if _SESSION is None:
         _CONFIG = load_jira_config()
         _SESSION = build_jira_session(_CONFIG)
+    assert _CONFIG is not None and _SESSION is not None
     return _CONFIG, _SESSION
 
 
@@ -114,7 +117,8 @@ def get_issue_count(jql: str) -> int:
 def search_issues(jql: str, fields: List[str], batch: int = 200) -> Iterator[Dict]:
     config, session = _get_session()
     base_url = config.base_url
-
+    response: Optional[requests.Response] = None 
+    
     for attempt in range(5):
         response = session.get(
             f"{base_url}/rest/api/2/search",
@@ -126,7 +130,10 @@ def search_issues(jql: str, fields: List[str], batch: int = 200) -> Iterator[Dic
             continue
         response.raise_for_status()
         break
-
+    
+    if response is None: 
+        return
+    
     data = response.json()
     first_page = data.get("issues", [])
     total = data.get("total", 0)
