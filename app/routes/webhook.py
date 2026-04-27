@@ -204,22 +204,41 @@ def _enrich_with_metrics(projects: list) -> list:
         import time
         from app.services.services import _DASHBOARD_CACHE, fetch_dashboard_data
         now = time.time()
+        
         for p in projects:
             key = (p["project_key"], 30)
             cached = _DASHBOARD_CACHE.get(key)
-            if not cached or cached["expires_at"] <= now:
-                # Cache miss → fetch fresh
+            
+            # CAS 1 : Cache frais → utiliser
+            if cached and cached["expires_at"] > now:
+                use_cache = True
+            
+            # CAS 2 : Cache vide ou expiré → essayer fetch
+            else:
                 try:
                     fetch_dashboard_data(p["project_key"], 30)
                     cached = _DASHBOARD_CACHE.get(key)
+                    use_cache = bool(cached)
                 except Exception as e:
                     print(f"[WEBHOOK] Fetch failed for {p['project_key']}: {e}")
-            if cached and cached["expires_at"] > now:
+                    # FALLBACK : utiliser cache même s'il est expiré
+                    use_cache = bool(cached)
+            
+            # Extraire les métriques
+            if use_cache and cached:
                 m = cached["payload"].get("metrics", {})
                 p["stale"]    = m.get("stale_in_progress_count", 0)
                 p["wip_pct"]  = round(m.get("wip_ratio", 0) * 100, 1)
                 p["total"]    = m.get("total", 0)
                 p["done_pct"] = round(m.get("done_ratio", 0) * 100, 1)
+            else:
+                # FALLBACK ULTIME : valeurs par défaut pour éviter "None"
+                p["stale"]    = p.get("stale", 0)
+                p["wip_pct"]  = p.get("wip_pct", 0.0)
+                p["total"]    = p.get("total", 0)
+                p["done_pct"] = p.get("done_pct", 0.0)
+                print(f"[WEBHOOK] Aucune donnée pour {p['project_key']} — fallback par défaut")
+                
     except Exception as exc:
         print(f"[WEBHOOK] Enrichissement échoué : {exc}")
     return projects

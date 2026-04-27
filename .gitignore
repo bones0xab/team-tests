@@ -212,3 +212,32 @@ nttdata-ai-agent-project-tracking/
 tests/ 
 ai-dashboard.tar 
 mobile/node_modules/
+# Generated files
+*.json
+!alert_rules.yml
+!prometheus.yml
+!alertmanager.yml
+montecarlo_cache.json
+body.json
+
+# Build artifacts
+*.tar
+*.tar.gz
+ai-dashboard.tar
+
+# Secrets
+.env
+.env.local
+
+# Cache
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -52,6 +52,9 @@ reportlab==4.4.10
 # AI PIPELINE
 # ─────────────────────────────────────────────
 langchain-core==0.3.63
+langchain==0.3.21         
+langchain-openai==0.3.19
+langchain-ollama==0.2.3    
 langchain-groq==0.2.4
 langgraph==0.2.73
 langsmith==0.2.11
