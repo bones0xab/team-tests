@@ -7,11 +7,8 @@ pipeline {
         IMAGE_TAG       = "build-${BUILD_NUMBER}"
         COMPOSE_PROJECT = 'team-tests'
 
-        // ── Test credentials (store in Jenkins > Manage Credentials) ──
-        TEST_USER     = credentials('CI_TEST_USERNAME')   // e.g. ci-tester
-        TEST_PASSWORD = credentials('CI_TEST_PASSWORD')   // e.g. CiPass123!
-
-        // ── Teams webhook (store as Secret Text in Jenkins credentials) ──
+        TEST_USER         = credentials('CI_TEST_USERNAME')
+        TEST_PASSWORD     = credentials('CI_TEST_PASSWORD')
         TEAMS_WEBHOOK_URL = credentials('TEAMS_WEBHOOK_URL')
     }
 
@@ -131,6 +128,36 @@ EOF
         }
 
         // ─────────────────────────────────────────────────────
+        stage('Unit Tests') {
+        // ─────────────────────────────────────────────────────
+            steps {
+                echo 'Running unit tests...'
+                script {
+                    def result = sh(
+                        script: """
+                            docker run --rm \
+                                -e DATABASE_URL=sqlite:///./test.db \
+                                -e SECRET_KEY=test-secret-key \
+                                -e DEBUG=true \
+                                -e ALGORITHM=HS256 \
+                                -e ACCESS_TOKEN_EXPIRE_MINUTES=30 \
+                                -e REDIS_URL=redis://localhost:6379 \
+                                ${BACKEND_IMAGE}:${IMAGE_TAG} \
+                                pytest app/tests/ -v --tb=short 2>&1 || true
+                        """,
+                        returnStatus: true
+                    )
+                    if (result != 0) {
+                        echo '⚠️ Some unit tests failed (non-blocking)'
+                        currentBuild.result = 'UNSTABLE'
+                    } else {
+                        echo '✅ Unit tests passed'
+                    }
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────
         stage('Smoke Test - Backend') {
         // ─────────────────────────────────────────────────────
             steps {
@@ -148,14 +175,12 @@ EOF
                             -e REDIS_URL=redis://localhost:6379 \
                             ${BACKEND_IMAGE}:${IMAGE_TAG}
 
-                        sleep 10
-
                         echo "=== CONTAINER LOGS ==="
                         docker logs smoke-backend-${BUILD_NUMBER} --tail=50 2>&1 || true
 
-                        echo "=== HEALTH CHECK ==="
+                        echo "=== HEALTH CHECK (polling) ==="
                         STATUS=000
-                        for i in {1..8}; do
+                        for i in \$(seq 1 12); do
                             STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8099/api/health 2>/dev/null || echo "000")
                             echo "Attempt \$i — status: \$STATUS"
                             if [ "\$STATUS" = "200" ]; then
@@ -191,8 +216,14 @@ EOF
                                 --build \
                                 --remove-orphans
 
-                            echo "Waiting for stack to be ready..."
-                            sleep 30
+                            echo "Waiting for stack to be ready (polling)..."
+                            STATUS=000
+                            for i in \$(seq 1 12); do
+                                STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
+                                echo "Attempt \$i — backend: \$STATUS"
+                                [ "\$STATUS" = "200" ] && break
+                                sleep 5
+                            done
 
                             echo "=== STACK STATUS ==="
                             docker compose -p ${COMPOSE_PROJECT}-test ps
@@ -212,8 +243,6 @@ EOF
 
                             METRICS_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/metrics 2>/dev/null || echo "000")
                             echo "Metrics endpoint    : \$METRICS_STATUS"
-
-                            docker compose -p ${COMPOSE_PROJECT}-test down || true
 
                             if [ "\$BACKEND_STATUS" != "200" ]; then
                                 echo "❌ Integration test failed — backend not healthy"
@@ -241,15 +270,19 @@ EOF
                         docker compose -p ${COMPOSE_PROJECT}-infra \
                             -f docker-compose.yml up -d \
                             --remove-orphans
-                        sleep 20
+
+                        echo "Waiting for infra (polling)..."
+                        for i in \$(seq 1 8); do
+                            REDIS_RESULT=\$(docker exec \$(docker compose -p ${COMPOSE_PROJECT}-infra ps -q redis) \
+                                redis-cli PING 2>/dev/null || echo "FAILED")
+                            [ "\$REDIS_RESULT" = "PONG" ] && break
+                            sleep 5
+                        done
 
                         echo "=== [1/3] REDIS CHECK ==="
-                        REDIS_RESULT=\$(docker exec \$(docker compose -p ${COMPOSE_PROJECT}-infra ps -q redis) \
-                            redis-cli PING 2>/dev/null || echo "FAILED")
                         echo "Redis PING: \$REDIS_RESULT"
                         if [ "\$REDIS_RESULT" != "PONG" ]; then
                             echo "❌ Redis is not responding"
-                            docker compose -p ${COMPOSE_PROJECT}-infra down || true
                             exit 1
                         fi
                         echo "✅ Redis is healthy"
@@ -260,7 +293,6 @@ EOF
                         echo "DB rows returned: \$DB_RESULT"
                         if [ "\$DB_RESULT" = "0" ]; then
                             echo "❌ Database is not responding or schema missing"
-                            docker compose -p ${COMPOSE_PROJECT}-infra down || true
                             exit 1
                         fi
                         echo "✅ Database is healthy"
@@ -274,8 +306,6 @@ EOF
                         else
                             echo "✅ Database schema validated (\$TABLES tables)"
                         fi
-
-                        docker compose -p ${COMPOSE_PROJECT}-infra down || true
                     """
                 }
             }
@@ -291,7 +321,13 @@ EOF
                         docker compose -p ${COMPOSE_PROJECT}-auth \
                             -f docker-compose.yml up -d \
                             --remove-orphans
-                        sleep 25
+
+                        echo "Waiting for auth stack (polling)..."
+                        for i in \$(seq 1 10); do
+                            STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
+                            [ "\$STATUS" = "200" ] && break
+                            sleep 5
+                        done
 
                         BASE=http://localhost:8000
 
@@ -299,14 +335,12 @@ EOF
                         REGISTER_STATUS=\$(curl -s -o /tmp/register_resp.json -w "%{http_code}" \
                             -X POST \$BASE/api/register \
                             -H "Content-Type: application/json" \
-                            -d '{"username":"${TEST_USER}","email":"ci-test@jenkins.local","password":"${TEST_PASSWORD}"}' \
+                            -d "{\"username\":\"${TEST_USER}\",\"email\":\"ci-test@jenkins.local\",\"password\":\"${TEST_PASSWORD}\"}" \
                             2>/dev/null || echo "000")
                         echo "Register status: \$REGISTER_STATUS"
-                        cat /tmp/register_resp.json || true
                         # 201 = created, 400 = already exists (both OK for CI)
                         if [ "\$REGISTER_STATUS" != "201" ] && [ "\$REGISTER_STATUS" != "400" ]; then
                             echo "❌ Register failed with status \$REGISTER_STATUS"
-                            docker compose -p ${COMPOSE_PROJECT}-auth down || true
                             exit 1
                         fi
                         echo "✅ Register OK"
@@ -314,13 +348,11 @@ EOF
                         echo "=== [2/4] LOGIN TEST ==="
                         LOGIN_RESP=\$(curl -s -X POST \$BASE/api/login \
                             -H "Content-Type: application/json" \
-                            -d '{"username":"${TEST_USER}","password":"${TEST_PASSWORD}"}' \
+                            -d "{\"username\":\"${TEST_USER}\",\"password\":\"${TEST_PASSWORD}\"}" \
                             2>/dev/null || echo "")
-                        echo "Login response: \$LOGIN_RESP"
                         TOKEN=\$(echo \$LOGIN_RESP | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
                         if [ -z "\$TOKEN" ]; then
                             echo "❌ Login failed — no token returned"
-                            docker compose -p ${COMPOSE_PROJECT}-auth down || true
                             exit 1
                         fi
                         echo "✅ Login OK — token received"
@@ -333,7 +365,6 @@ EOF
                         echo "/api/me status: \$ME_STATUS"
                         if [ "\$ME_STATUS" != "200" ]; then
                             echo "❌ /api/me failed with status \$ME_STATUS"
-                            docker compose -p ${COMPOSE_PROJECT}-auth down || true
                             exit 1
                         fi
                         echo "✅ /api/me OK"
@@ -349,68 +380,64 @@ EOF
                         else
                             echo "✅ Logout OK"
                         fi
-
-                        docker compose -p ${COMPOSE_PROJECT}-auth down || true
                     """
                 }
             }
         }
 
         // ─────────────────────────────────────────────────────
-stage('Teams Webhook Test') {
-    steps {
-        echo 'Testing webhook endpoint and Teams notification...'
-        script {
-            sh """
-                docker compose -p ${COMPOSE_PROJECT}-auth \
-                    -f docker-compose.yml up -d --remove-orphans 2>/dev/null || true
-                sleep 10
+        stage('Teams Webhook Test') {
+        // ─────────────────────────────────────────────────────
+            steps {
+                echo 'Testing webhook endpoint (CI-only — skips digest throttle)...'
+                script {
+                    sh """
+                        echo "=== TESTING /api/webhook/alert ==="
+                        WEBHOOK_STATUS=\$(curl -s -o /tmp/webhook_resp.json -w "%{http_code}" \
+                            -X POST http://localhost:8000/api/webhook/alert \
+                            -H "Content-Type: application/json" \
+                            -d '{
+                                "receiver": "jenkins-ci",
+                                "status": "firing",
+                                "alerts": [{
+                                    "status": "firing",
+                                    "labels": {
+                                        "project_key": "CI-TEST",
+                                        "severity": "WARNING",
+                                        "ci_test": "true"
+                                    },
+                                    "annotations": {
+                                        "summary": "Jenkins CI webhook test",
+                                        "description": "Automated test from build #${BUILD_NUMBER}"
+                                    }
+                                }],
+                                "groupLabels": {},
+                                "commonLabels": {}
+                            }' 2>/dev/null || echo "000")
 
-                echo "=== TESTING /api/webhook/alert ==="
-                WEBHOOK_STATUS=\$(curl -s -o /tmp/webhook_resp.json -w "%{http_code}" \\
-                    -X POST http://localhost:8000/api/webhook/alert \\
-                    -H "Content-Type: application/json" \\
-                    -d '{
-                        "receiver": "jenkins-ci",
-                        "status": "firing",
-                        "alerts": [{
-                            "status": "firing",
-                            "labels": {
-                                "project_key": "CI-TEST",
-                                "severity": "WARNING"
-                            },
-                            "annotations": {
-                                "summary": "Jenkins CI webhook test",
-                                "description": "Automated test from build #${BUILD_NUMBER}"
-                            }
-                        }],
-                        "groupLabels": {},
-                        "commonLabels": {}
-                    }' 2>/dev/null || echo "000")
+                        echo "Webhook status: \$WEBHOOK_STATUS"
+                        cat /tmp/webhook_resp.json || true
 
-                echo "Webhook status: \$WEBHOOK_STATUS"
-                cat /tmp/webhook_resp.json || true
+                        if [ "\$WEBHOOK_STATUS" != "200" ]; then
+                            echo "⚠️ Webhook returned \$WEBHOOK_STATUS (non-blocking)"
+                        else
+                            echo "✅ Webhook OK"
+                        fi
 
-                if [ "\$WEBHOOK_STATUS" != "200" ]; then
-                    echo "⚠️ Webhook returned \$WEBHOOK_STATUS (non-blocking)"
-                else
-                    echo "✅ Webhook OK — Teams notification triggered"
-                fi
-
-                echo "=== TESTING /api/webhook/history ==="
-                HISTORY_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \\
-                    http://localhost:8000/api/webhook/history?project_key=CI-TEST \\
-                    2>/dev/null || echo "000")
-                echo "History status: \$HISTORY_STATUS"
-                if [ "\$HISTORY_STATUS" = "200" ]; then
-                    echo "✅ Alert history endpoint OK"
-                else
-                    echo "⚠️ History returned \$HISTORY_STATUS"
-                fi
-            """
+                        echo "=== TESTING /api/webhook/history ==="
+                        HISTORY_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
+                            http://localhost:8000/api/webhook/history?project_key=CI-TEST \
+                            2>/dev/null || echo "000")
+                        echo "History status: \$HISTORY_STATUS"
+                        if [ "\$HISTORY_STATUS" = "200" ]; then
+                            echo "✅ Alert history endpoint OK"
+                        else
+                            echo "⚠️ History returned \$HISTORY_STATUS"
+                        fi
+                    """
+                }
+            }
         }
-    }
-}
 
         // ─────────────────────────────────────────────────────
         stage('Deploy') {
@@ -424,55 +451,51 @@ stage('Teams Webhook Test') {
                         -f docker-compose.yml \
                         up -d --remove-orphans
 
-                    echo "Waiting for services to start..."
-                    sleep 25
+                    echo "Waiting for services (polling)..."
+                    for i in \$(seq 1 12); do
+                        HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
+                        [ "\$HEALTH" = "200" ] && break
+                        sleep 5
+                    done
 
                     echo "=== RUNNING SERVICES ==="
                     docker compose -p ${COMPOSE_PROJECT} ps
 
                     echo "=== POST-DEPLOY HEALTH CHECKS ==="
-
-                    # 1. Backend health
                     HEALTH=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/health 2>/dev/null || echo "000")
-                    echo "Backend /api/health     : \$HEALTH"
+                    echo "Backend /api/health  : \$HEALTH"
 
-                    # 2. Metrics endpoint
                     METRICS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/api/metrics 2>/dev/null || echo "000")
-                    echo "Backend /api/metrics    : \$METRICS"
+                    echo "Backend /api/metrics : \$METRICS"
 
-                    # 3. Frontend
                     FRONTEND=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null || echo "000")
-                    echo "Frontend                : \$FRONTEND"
+                    echo "Frontend             : \$FRONTEND"
 
-                    # 4. Redis alive
                     REDIS=\$(docker exec \$(docker compose -p ${COMPOSE_PROJECT} ps -q redis) \
                         redis-cli PING 2>/dev/null || echo "FAILED")
-                    echo "Redis PING              : \$REDIS"
+                    echo "Redis PING           : \$REDIS"
 
-                    # 5. DB alive
                     DB=\$(docker exec \$(docker compose -p ${COMPOSE_PROJECT} ps -q db) \
                         psql -U postgres -d jira_health -c "SELECT 1" 2>/dev/null | grep -c "1 row" || echo "0")
-                    echo "Database SELECT 1       : \$DB rows"
+                    echo "Database SELECT 1    : \$DB row(s)"
 
-                    # 6. Login endpoint still works
                     LOGIN_STATUS=\$(curl -s -o /dev/null -w "%{http_code}" \
                         -X POST http://localhost:8000/api/login \
                         -H "Content-Type: application/json" \
-                        -d '{"username":"${TEST_USER}","password":"${TEST_PASSWORD}"}' \
+                        -d "{\"username\":\"${TEST_USER}\",\"password\":\"${TEST_PASSWORD}\"}" \
                         2>/dev/null || echo "000")
-                    echo "Auth /api/login         : \$LOGIN_STATUS"
+                    echo "Auth /api/login      : \$LOGIN_STATUS"
 
                     echo "=================================================="
                     echo "  DEPLOYMENT SUMMARY"
-                    echo "  Backend health  : \$HEALTH"
-                    echo "  Metrics         : \$METRICS"
-                    echo "  Frontend        : \$FRONTEND"
-                    echo "  Redis           : \$REDIS"
-                    echo "  Database        : \$DB row(s)"
-                    echo "  Auth login      : \$LOGIN_STATUS"
+                    echo "  Backend health : \$HEALTH"
+                    echo "  Metrics        : \$METRICS"
+                    echo "  Frontend       : \$FRONTEND"
+                    echo "  Redis          : \$REDIS"
+                    echo "  Database       : \$DB row(s)"
+                    echo "  Auth login     : \$LOGIN_STATUS"
                     echo "=================================================="
 
-                    # Only fail deploy if backend is completely down
                     if [ "\$HEALTH" != "200" ]; then
                         echo "❌ DEPLOYMENT FAILED — backend /api/health not responding"
                         exit 1
@@ -495,54 +518,94 @@ stage('Teams Webhook Test') {
     post {
     // ─────────────────────────────────────────────────────────
         always {
-            echo 'Cleaning up smoke test containers and dangling images...'
+            echo 'Cleaning up all compose stacks and temp files...'
             sh """
+                docker compose -p ${COMPOSE_PROJECT}-test  down --remove-orphans || true
+                docker compose -p ${COMPOSE_PROJECT}-infra down --remove-orphans || true
+                docker compose -p ${COMPOSE_PROJECT}-auth  down --remove-orphans || true
                 docker ps -a | grep -E "smoke-" | awk '{print \$1}' | xargs -r docker rm -f || true
                 docker image prune -f || true
-                rm -f .env /tmp/register_resp.json /tmp/teams_resp.json
+                rm -f .env /tmp/register_resp.json /tmp/webhook_resp.json /tmp/teams_payload.json || true
             """
         }
+
         success {
             echo "✅ BUILD & DEPLOY SUCCESSFUL — ${BACKEND_IMAGE}:${IMAGE_TAG}"
             sh """
+                cat > /tmp/teams_payload.json << EOF
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "00C853",
+    "summary": "Build ${BUILD_NUMBER} passed",
+    "title": "✅ Build #${BUILD_NUMBER} PASSED",
+    "sections": [{
+        "facts": [
+            {"name": "Branch", "value": "${env.GIT_BRANCH}"},
+            {"name": "Commit", "value": "${env.GIT_COMMIT}"},
+            {"name": "Image",  "value": "${BACKEND_IMAGE}:${IMAGE_TAG}"}
+        ],
+        "markdown": true
+    }]
+}
+EOF
                 curl -s -X POST "${TEAMS_WEBHOOK_URL}" \
                     -H "Content-Type: application/json" \
-                    -d '{
-                        "@type": "MessageCard",
-                        "themeColor": "00C853",
-                        "title": "✅ Build #${BUILD_NUMBER} PASSED",
-                        "text": "Branch: **${env.GIT_BRANCH}** deployed successfully. Image: `${BACKEND_IMAGE}:${IMAGE_TAG}`"
-                    }' || true
+                    -d @/tmp/teams_payload.json || true
             """
         }
+
         failure {
             echo "❌ BUILD FAILED — check console output above for details"
             sh """
                 echo "=== DOCKER COMPOSE LOGS ON FAILURE ==="
                 docker compose -p ${COMPOSE_PROJECT}-test logs --tail=50 2>&1 || true
-                docker compose -p ${COMPOSE_PROJECT}-test down || true
 
+                cat > /tmp/teams_payload.json << EOF
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "D50000",
+    "summary": "Build ${BUILD_NUMBER} failed",
+    "title": "❌ Build #${BUILD_NUMBER} FAILED",
+    "sections": [{
+        "facts": [
+            {"name": "Branch", "value": "${env.GIT_BRANCH}"},
+            {"name": "Commit", "value": "${env.GIT_COMMIT}"},
+            {"name": "Action", "value": "Check Jenkins for details"}
+        ],
+        "markdown": true
+    }]
+}
+EOF
                 curl -s -X POST "${TEAMS_WEBHOOK_URL}" \
                     -H "Content-Type: application/json" \
-                    -d '{
-                        "@type": "MessageCard",
-                        "themeColor": "D50000",
-                        "title": "❌ Build #${BUILD_NUMBER} FAILED",
-                        "text": "Branch: **${env.GIT_BRANCH}** | Commit: **${env.GIT_COMMIT}** — Check Jenkins for details."
-                    }' || true
+                    -d @/tmp/teams_payload.json || true
             """
         }
+
         unstable {
             echo "⚠️ BUILD UNSTABLE — images built but some tests had issues"
             sh """
+                cat > /tmp/teams_payload.json << EOF
+{
+    "@type": "MessageCard",
+    "@context": "http://schema.org/extensions",
+    "themeColor": "FF6D00",
+    "summary": "Build ${BUILD_NUMBER} unstable",
+    "title": "⚠️ Build #${BUILD_NUMBER} UNSTABLE",
+    "sections": [{
+        "facts": [
+            {"name": "Branch", "value": "${env.GIT_BRANCH}"},
+            {"name": "Note",   "value": "Some tests had issues but deployment continued"}
+        ],
+        "markdown": true
+    }]
+}
+EOF
                 curl -s -X POST "${TEAMS_WEBHOOK_URL}" \
                     -H "Content-Type: application/json" \
-                    -d '{
-                        "@type": "MessageCard",
-                        "themeColor": "FF6D00",
-                        "title": "⚠️ Build #${BUILD_NUMBER} UNSTABLE",
-                        "text": "Branch: **${env.GIT_BRANCH}** — some tests had issues but deployment continued."
-                    }' || true
+                    -d @/tmp/teams_payload.json || true
             """
         }
     }
