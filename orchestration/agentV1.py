@@ -10,8 +10,8 @@ from langchain_core.prompts import ChatPromptTemplate   # FIX 4: needed for crea
 
 from dotenv import load_dotenv
 
-from services.Fetch import search_issues
-from services.Normalisation import normalize_issue
+from app.services.jira_fetch import search_issues
+from app.services.normalizer import normalize_issue
 from orchestration.metrics import compute_signals
 from orchestration.rules import evaluate_rules
 

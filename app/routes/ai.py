@@ -4,8 +4,8 @@ import time
 import logging
 from app.auth.permissions import require_permission
 from orchestration.agentV2 import graph, get_jira_data_issues
-from services.Fetch import get_projects
-from services.Normalisation import normalize_projects
+from app.services.jira_fetch import get_projects
+from app.services.normalizer import normalize_projects
 
 router = APIRouter(prefix="/api", tags=["AI"])
 

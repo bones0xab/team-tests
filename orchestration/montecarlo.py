@@ -11,7 +11,7 @@ import numpy as np
 
 # Ensure we can import from our services
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from services.Fetch import get_projects, search_issues, get_issue_count
+from app.services.jira_fetch import get_projects, search_issues, get_issue_count
 import dateutil.parser
 
 # ── Redis / File Cache Configuration ─────────────────────────────────────────

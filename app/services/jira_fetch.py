@@ -14,7 +14,7 @@ import redis as sync_redis_lib
 import hashlib
 import os
 from requests import Session as RequestsSession
-from services.Auth import JiraConfig, build_jira_session, load_jira_config, build_async_jira_client
+from app.services.auth_helpers import JiraConfig, build_jira_session, load_jira_config, build_async_jira_client
 
 logger = logging.getLogger(__name__)
 

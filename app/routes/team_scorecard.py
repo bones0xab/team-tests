@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from app.auth.permissions import require_permission
-from services.Fetch import search_issues
+from app.services.jira_fetch import search_issues
 from datetime import datetime, timezone
 import dateutil.parser
 import json
@@ -266,7 +266,7 @@ Metrics for {name}:
                 "ai_flag": None
             }
 
-        from services.WebSocketManager import manager
+        from app.services.ws_manager import manager
         manager.broadcast_sync({
             "type": "SCORECARD_TOKEN",
             "user": data["displayName"],

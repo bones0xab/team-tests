@@ -2,7 +2,7 @@
 
 import time
 from typing import Optional
-from services.Auth import build_jira_session, load_jira_config
+from app.services.auth_helpers import build_jira_session, load_jira_config
 
 
 class IncidentService:

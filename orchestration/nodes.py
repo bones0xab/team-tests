@@ -65,7 +65,7 @@ def llm_insight_node(state: ProjectState):
     })
 
     insight_dict = result.model_dump()
-    from services.WebSocketManager import manager
+    from app.services.ws_manager import manager
     manager.broadcast_sync({"type": "AI_UPDATE", "data": insight_dict}, "global")
 
     return {"llm_insights": insight_dict}

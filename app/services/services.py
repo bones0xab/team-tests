@@ -3,8 +3,8 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from services.Fetch import search_issues
-from services.Normalisation import normalize_issue
+from app.services.jira_fetch import search_issues
+from app.services.normalizer import normalize_issue
 from orchestration.metrics import compute_signals
 from orchestration.rules import evaluate_rules
 
@@ -141,8 +141,8 @@ def fetch_portfolio_summary(days_back: int) -> list:
         if entry["expires_at"] > now:
             return entry["payload"]
 
-    from services.Fetch import get_projects, search_issues
-    from services.Normalisation import normalize_projects
+    from app.services.jira_fetch import get_projects, search_issues
+    from app.services.normalizer import normalize_projects
 
     projects_list = normalize_projects(get_projects())
     if not projects_list:

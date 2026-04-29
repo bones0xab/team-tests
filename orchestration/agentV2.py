@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 import re
 from langchain_openai import ChatOpenAI          # ✅ correct import
 from langgraph.graph import StateGraph, END
-from services.Fetch import search_issues
-from services.Normalisation import normalize_issue
+from app.services.jira_fetch import search_issues
+from app.services.normalizer import normalize_issue
 from orchestration.metrics import compute_signals
 from orchestration.rules import evaluate_rules
 

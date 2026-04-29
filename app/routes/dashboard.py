@@ -4,8 +4,8 @@ from app.auth.permissions import require_permission
 from app.services.services import fetch_dashboard_data
 from app.services.teams_notification_service import TeamsNotificationService
 from app.metrics.prometheus_metrics import update_project_metrics
-from services.Fetch import get_projects
-from services.Normalisation import normalize_projects
+from app.services.jira_fetch import get_projects
+from app.services.normalizer import normalize_projects
 import logging
 from collections import defaultdict
 import time

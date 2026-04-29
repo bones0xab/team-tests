@@ -12,7 +12,7 @@ import dateutil.parser
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.permissions import require_permission
-from services.Auth import load_jira_config, build_jira_session
+from app.services.auth_helpers import load_jira_config, build_jira_session
 
 router = APIRouter(prefix="/api/jira", tags=["Jira Explorer"])
 
@@ -125,7 +125,7 @@ def _normalize_issue(raw: dict, base_url: str) -> dict:
             break
 
     # Get Component Lead (lead of the first component)
-    from services.Fetch import get_project_components
+    from app.services.jira_fetch import get_project_components
     comp_lead = "—"
     try:
         pkey = project_obj.get('key')
@@ -197,7 +197,7 @@ def search_issues(
 ):
     translated_components = list(components)
     if leads:
-        from services.Fetch import get_projects, get_project_components
+        from app.services.jira_fetch import get_projects, get_project_components
         try:
             target_leads = [l.lower() for l in leads]
             # If no project keys provided, we have to check all projects (expensive but cached)
