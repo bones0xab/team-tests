@@ -27,18 +27,22 @@ class AlertService:
     DEDUP_TTL_SECONDS: int = 600   # fenêtre de déduplication (10 min)
 
     def __init__(self, redis_host: str = "redis", redis_port: int = 6379) -> None:
-        _raw = redis.Redis(
-            host=redis_host,
-            port=redis_port,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
-        # cast() → Pyright voit RedisStrClient (types précis) au lieu de
-        # redis.Redis (ResponseT=Unknown → Awaitable[Unknown])
-        # C'est un no-op pur à runtime : aucun impact performance
-        self.redis: RedisStrClient = cast(RedisStrClient, _raw)
-        self._verify_redis()
+        self._memory_mode = False
+        self._memory_locks: Dict[str, float] = {}
+        self._memory_dedup: Dict[str, Tuple[str, float]] = {}
+        try:
+            _raw = redis.Redis(
+                host=redis_host,
+                port=redis_port,
+                decode_responses=True,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            self.redis: RedisStrClient = cast(RedisStrClient, _raw)
+            self._verify_redis()
+        except redis.ConnectionError as exc:
+            logger.warning("⚠️ AlertService — Redis indisponible, mode mémoire : %s", exc)
+            self._memory_mode = True
 
     def _verify_redis(self) -> None:
         try:
@@ -106,22 +110,31 @@ class AlertService:
         """Enregistre le hash après envoi réussi."""
         payload_hash = self._compute_payload_hash(report_data)
         dedup_key    = f"alert_dedup:{report_type}:{payload_hash}"
-        self.redis.set(
-            dedup_key,
-            json.dumps({
-                "sent_at":     datetime.now(timezone.utc).isoformat(),
-                "at_risk":     report_data.get("at_risk_count"),
-                "total_stale": report_data.get("total_stale"),
-                "hash":        payload_hash,
-            }),
-            ex=self.DEDUP_TTL_SECONDS,
-        )
+        now = datetime.now(timezone.utc).timestamp()
+        if self._memory_mode:
+            self._memory_dedup[dedup_key] = (payload_hash, now + self.DEDUP_TTL_SECONDS)
+        else:
+            self.redis.set(
+                dedup_key,
+                json.dumps({
+                    "sent_at":     datetime.now(timezone.utc).isoformat(),
+                    "at_risk":     report_data.get("at_risk_count"),
+                    "total_stale": report_data.get("total_stale"),
+                    "hash":        payload_hash,
+                }),
+                ex=self.DEDUP_TTL_SECONDS,
+            )
         logger.info("✅ Alerte enregistrée — %s hash=%s TTL=%ss",
                     report_type, payload_hash, self.DEDUP_TTL_SECONDS)
 
     def release_lock(self, report_type: str) -> None:
         """Libère le lock manuellement après erreur."""
-        deleted: int = self.redis.delete(f"alert_lock:{report_type}")  # int ✅
+        lock_key = f"alert_lock:{report_type}"
+        if self._memory_mode:
+            self._memory_locks.pop(lock_key, None)
+            deleted = 1
+        else:
+            deleted: int = self.redis.delete(lock_key)
         logger.info("🔓 Lock libéré — %s (deleted=%s)", report_type, deleted)
 
     # ─── Diagnostic ───────────────────────────────────────────────────────────

@@ -202,7 +202,7 @@ async def receive_alert(
 def _enrich_with_metrics(projects: list) -> list:
     try:
         import time
-        from app.services.services import _DASHBOARD_CACHE, fetch_dashboard_data
+        from app.services.dashboard_service import _DASHBOARD_CACHE, fetch_dashboard_data
         now = time.time()
         
         for p in projects:

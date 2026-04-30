@@ -5,9 +5,9 @@ from groq import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
-from orchestration.agentV2 import get_jira_data_issues, _snapshot_save
-from orchestration.metrics import compute_signals
-from orchestration.rules import evaluate_rules
+from app.orchestration.agentV2 import get_jira_data_issues, _snapshot_save
+from app.orchestration.metrics import compute_signals
+from app.orchestration.rules import evaluate_rules
 from dotenv import load_dotenv
 
 load_dotenv()

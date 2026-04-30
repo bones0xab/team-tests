@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import requests
 from app.auth.permissions import require_permission
-from app.services.services import fetch_dashboard_data
+from app.services.dashboard_service import fetch_dashboard_data
 from app.services.teams_notification_service import TeamsNotificationService
 from app.metrics.prometheus_metrics import update_project_metrics
 from app.services.jira_fetch import get_projects
@@ -141,7 +141,7 @@ async def portfolio(
     days_back: int = Query(default=30),
     _user=Depends(require_permission("dashboard:view")),
 ):
-    from app.services.services import fetch_portfolio_summary
+    from app.services.dashboard_service import fetch_portfolio_summary
     try:
         return fetch_portfolio_summary(days_back)
     except Exception as exc:

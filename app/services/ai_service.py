@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
 
-from orchestration.agentV2 import run_ai_analysis
+from app.orchestration.agentV2 import run_ai_analysis
 
 
 def execute_ai():

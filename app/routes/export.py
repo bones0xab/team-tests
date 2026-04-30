@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from app.auth.permissions import require_permission
-from app.services.services import fetch_dashboard_data
+from app.services.dashboard_service import fetch_dashboard_data
 
 router = APIRouter(prefix="/api", tags=["Export"])
 

@@ -11,8 +11,8 @@ from langchain_openai import ChatOpenAI          # ✅ correct import
 from langgraph.graph import StateGraph, END
 from app.services.jira_fetch import search_issues
 from app.services.normalizer import normalize_issue
-from orchestration.metrics import compute_signals
-from orchestration.rules import evaluate_rules
+from app.orchestration.metrics import compute_signals
+from app.orchestration.rules import evaluate_rules
 
 # ── TypedDict with required keys ─────────────────────────────────────────────
 # total=True (default) = all keys required → no more TypedDict access warnings

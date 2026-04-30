@@ -82,7 +82,7 @@ async def metrics_refresher() -> None:
     Met à jour les métriques Prometheus pour chaque projet.
     Cache-first : si le cache est chaud, pas d'appel Jira.
     """
-    from app.services.services import (
+    from app.services.dashboard_service import (
         _DASHBOARD_CACHE,
         fetch_dashboard_data,
         fetch_portfolio_summary,

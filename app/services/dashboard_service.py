@@ -5,8 +5,8 @@ from datetime import datetime
 
 from app.services.jira_fetch import search_issues
 from app.services.normalizer import normalize_issue
-from orchestration.metrics import compute_signals
-from orchestration.rules import evaluate_rules
+from app.orchestration.metrics import compute_signals
+from app.orchestration.rules import evaluate_rules
 
 _DASHBOARD_CACHE = {}
 _PORTFOLIO_CACHE = {}

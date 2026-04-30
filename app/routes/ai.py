@@ -3,7 +3,7 @@ import requests
 import time
 import logging
 from app.auth.permissions import require_permission
-from orchestration.agentV2 import graph, get_jira_data_issues
+from app.orchestration.agentV2 import graph, get_jira_data_issues
 from app.services.jira_fetch import get_projects
 from app.services.normalizer import normalize_projects
 
@@ -41,7 +41,7 @@ async def generate_ai_insights(
         if entry and time.time() - entry["timestamp"] < CACHE_TTL:
             return entry["data"]
 
-        from app.services.services import fetch_dashboard_data
+        from app.services.dashboard_service import fetch_dashboard_data
         data = fetch_dashboard_data(project_key, days_back=30)
         logging.info("Generating AI insights for project: %s", project_key)
         if not data or not data.get("issues"):

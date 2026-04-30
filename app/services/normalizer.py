@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Any
 from dateutil import parser
 from pydantic import BaseModel, Field
 
-from adapters.jira import jira_canonical_status
+from app.adapters.jira import jira_canonical_status
 
 # --- Pydantic Models for Issue Normalisation ---
 
