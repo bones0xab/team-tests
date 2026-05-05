@@ -40,7 +40,7 @@ class AlertService:
             )
             self.redis: RedisStrClient = cast(RedisStrClient, _raw)
             self._verify_redis()
-        except redis.ConnectionError as exc:
+        except Exception as exc:  
             logger.warning("⚠️ AlertService — Redis indisponible, mode mémoire : %s", exc)
             self._memory_mode = True
 
@@ -48,9 +48,8 @@ class AlertService:
         try:
             self.redis.ping()
             logger.info("✅ AlertService — Redis opérationnel")
-        except redis.ConnectionError as exc:
+        except Exception as exc:  # ← CATCH TOUT
             logger.error("❌ AlertService — Redis inaccessible : %s", exc)
-            raise
 
     # ─── Hash de contenu ──────────────────────────────────────────────────────
 
