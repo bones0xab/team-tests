@@ -30,6 +30,8 @@ DIGEST_THROTTLE_SECONDS = 21600   # 6 hours
 RECALL_AFTER_SECONDS    = 86400   # 24 hours
 ACCUMULATE_WINDOW       = 120     # 2 minutes
 
+ALLOWED_PROJECTS = ["HPCMOROCCO", "MDPAM", "OBEDT", "SKYDE"]  # Filtre projets
+
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -80,6 +82,7 @@ async def receive_alert(
     for alert in firing_alerts:
         project_key = str(alert.labels.get("project_key", "UNKNOWN"))
         severity    = str(alert.labels.get("severity", "WARNING")).upper()
+
         summary     = str(alert.annotations.get("summary", ""))
         description = str(alert.annotations.get("description", ""))
 
@@ -161,7 +164,7 @@ async def receive_alert(
         print(f"[WEBHOOK] Sans Redis — {len(merged)} projets directs")
 
     # ── Send digest (atomic throttle — no race condition) ─────────────────────
-    digest_key = "portfolio:digest"
+    digest_key = "portfolio:WARNING:alert"
 
     if not throttle.is_throttled_or_mark(digest_key, seconds=DIGEST_THROTTLE_SECONDS):
         print(f"[WEBHOOK] Digest planifié — envoi dans {ACCUMULATE_WINDOW}s")
@@ -179,8 +182,21 @@ async def receive_alert(
                     final_projects = list(merged.values())
 
                 enriched = _enrich_with_metrics(final_projects)
-                notifier.send_consolidated_digest(enriched)
-                print(f"[WEBHOOK] Digest envoyé — {len(final_projects)} projets")
+                
+                # Throttle le digest avant envoi
+                from app.services.alert_sender import send_alert_throttled
+                sent = send_alert_throttled(
+                    project_key="portfolio",
+                    summary=f"[DIGEST] {len(final_projects)} projets",
+                    description="Consolidated health digest",
+                    severity="WARNING",
+                    throttle_seconds=DIGEST_THROTTLE_SECONDS,
+                )
+                if sent:
+                    notifier.send_consolidated_digest(enriched)
+                    print(f"[WEBHOOK] Digest envoyé — {len(final_projects)} projets")
+                else:
+                    print(f"[WEBHOOK] Digest SKIP (throttled)")
             except Exception as exc:
                 print(f"[WEBHOOK] Erreur envoi digest : {exc}")
 
